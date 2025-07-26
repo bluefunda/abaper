@@ -1,0 +1,238 @@
+# Docker Compose for CLI for ABAP Development Tool
+# Copyright (c) 2025 BlueFunda, Inc. All rights reserved.
+# Repository: https://github.com/bluefunda/abaper
+
+version: "3.8"
+
+services:
+  abaper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: v2.0.0-docker
+        BUILD_MODE: prod
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: bluefunda/abaper:latest
+    container_name: abaper-server
+    restart: unless-stopped
+    ports:
+      - "8013:8013"
+    environment:
+
+      # Required: SAP System Connection
+      - SAP_HOST=${SAP_HOST}
+      - SAP_CLIENT=${SAP_CLIENT:-100}
+      - SAP_USERNAME=${SAP_USERNAME}
+      - SAP_PASSWORD=${SAP_PASSWORD}
+
+      # Optional: Logging and Configuration
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - BUILD_MODE=${BUILD_MODE:-prod}
+
+    networks:
+      - abaper-network
+    volumes:
+      # Optional: Mount configuration file
+      - ${CONFIG_PATH:-./config}:/app/config:ro
+      # Optional: Mount logs directory
+      - ${LOGS_PATH:-./logs}:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8013/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.abaper.rule=Host(`abaper.local`)"
+      - "traefik.http.services.abaper.loadbalancer.server.port=8013"
+      - "com.bluefunda.service=abaper"
+      - "com.bluefunda.version=v2.0.0"
+
+  # Optional: Redis for caching (future enhancement)
+  redis:
+    image: redis:7-alpine
+    container_name: abaper-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-abaper123}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - abaper-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    labels:
+      - "com.bluefunda.service=redis"
+      - "com.bluefunda.purpose=caching"
+
+  # Optional: Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: abaper-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+    networks:
+      - abaper-network
+    depends_on:
+      - abaper
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 32M
+    labels:
+      - "com.bluefunda.service=nginx"
+      - "com.bluefunda.purpose=reverse-proxy"
+
+  # Optional: Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: abaper-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - abaper-network
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+    labels:
+      - "com.bluefunda.service=prometheus"
+      - "com.bluefunda.purpose=monitoring"
+
+  # Optional: Grafana dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: abaper-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - abaper-network
+    depends_on:
+      - prometheus
+    labels:
+      - "com.bluefunda.service=grafana"
+      - "com.bluefunda.purpose=visualization"
+
+networks:
+  abaper-network:
+    driver: bridge
+    name: abaper-network
+    labels:
+      - "com.bluefunda.network=main"
+
+volumes:
+  redis_data:
+    driver: local
+    labels:
+      - "com.bluefunda.volume=redis-data"
+
+  prometheus_data:
+    driver: local
+    labels:
+      - "com.bluefunda.volume=prometheus-data"
+
+  grafana_data:
+    driver: local
+    labels:
+      - "com.bluefunda.volume=grafana-data"
+# Environment file template
+# Create a .env file with the following variables:
+#
+# # Required Configuration
+# SAP_HOST=your-sap-system.company.com:8000
+# SAP_CLIENT=100
+# SAP_USERNAME=your-sap-username
+# SAP_PASSWORD=your-sap-password
+#
+# # Optional Configuration
+# BUILD_TIME=2025-01-18T10:00:00Z
+# GIT_COMMIT=abc1234
+# BUILD_MODE=prod
+# LOG_LEVEL=info
+# CONFIG_PATH=./config
+# LOGS_PATH=./logs
+#
+# # Optional Services
+# REDIS_PASSWORD=secure-redis-password
+# GRAFANA_USER=admin
+# GRAFANA_PASSWORD=secure-grafana-password
+#
+# Usage Examples:
+#
+# # Start all services
+# docker-compose up -d
+#
+# # Start only main service
+# docker-compose up -d abaper
+#
+# # Start with monitoring
+# docker-compose up -d abaper prometheus grafana
+#
+# # View logs
+# docker-compose logs -f abaper
+#
+# # Scale the service
+# docker-compose up -d --scale abaper=3
+#
+# # Stop all services
+# docker-compose down
+#
+# # Remove all data
+# docker-compose down -v
+#
+# # Health checks
+# curl http://localhost:8013/health
+# curl http://localhost:8013/version
