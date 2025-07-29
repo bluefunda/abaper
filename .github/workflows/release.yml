@@ -1,0 +1,82 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  REGISTRY_USER: ${{ secrets.DOCKER_HUB_USERNAME }}
+  REGISTRY_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5 # Updated to v5
+        with:
+          go-version: "1.21" # Changed from 1.24 to stable version
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Clear GoReleaser cache
+        run: |
+          rm -rf ~/.cache/goreleaser
+          rm -rf /tmp/goreleaser*
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6 # Updated to v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          DOCKER_CLI_EXPERIMENTAL: enabled
+          # Removed CHOCOLATEY_API_KEY since you're not using it yet
+
+      - name: Generate Release Summary
+        if: always() # Run even if GoReleaser fails
+        run: |
+          echo "## 🚀 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ **Binary Release**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+            echo "   - Cross-platform binaries for Linux, Windows, macOS, FreeBSD" >> $GITHUB_STEP_SUMMARY
+            echo "   - Available architectures: AMD64, ARM64, ARMv6, ARMv7" >> $GITHUB_STEP_SUMMARY
+            echo "   - Packages: DEB, RPM, APK" >> $GITHUB_STEP_SUMMARY
+            echo "   - Homebrew formula updated" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Docker Images**: Published successfully" >> $GITHUB_STEP_SUMMARY
+            echo "   - Multi-architecture images (linux/amd64, linux/arm64)" >> $GITHUB_STEP_SUMMARY
+            echo "   - Published to Docker Hub: \`bluefunda/abaper:${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - Universal manifest created for multi-arch support" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📦 Downloads" >> $GITHUB_STEP_SUMMARY
+            echo "- **Binaries**: [releases page](https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }})" >> $GITHUB_STEP_SUMMARY
+            echo "- **Docker**: \`docker pull bluefunda/abaper:${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Homebrew**: \`brew install bluefunda/tap/abaper\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Release Failed**: Check the logs above for details" >> $GITHUB_STEP_SUMMARY
+          fi

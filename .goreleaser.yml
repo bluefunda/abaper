@@ -1,0 +1,310 @@
+# GoReleaser v2 configuration
+version: 2
+
+project_name: abaper
+
+env:
+  - GO111MODULE=on
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: abaper
+    main: .
+    binary: abaper
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "6"
+      - "7"
+    ignore:
+      # Windows ARM support is limited, keep ARM64 disabled for Windows
+      - goos: windows
+        goarch: arm64
+      - goos: windows
+        goarch: arm
+      # FreeBSD ARM support - keep disabled if problematic
+      - goos: freebsd
+        goarch: arm64
+      - goos: freebsd
+        goarch: arm
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.BuildTime={{.Date}}
+      - -X main.GitCommit={{.Commit}}
+      - -X main.BuildMode=prod
+
+archives:
+  - id: default
+    files:
+      - README.md
+      - LICENSE
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^build:"
+      - "^chore:"
+      - "typo"
+      - "minor"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: "Bug fixes"
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Others
+      order: 999
+
+# GitHub release
+release:
+  github:
+    owner: bluefunda
+    name: abaper
+  draft: false # Changed to false - releases immediately
+  prerelease: auto
+  mode: replace
+  replace_existing_draft: true
+  header: |
+    ## What's Changed
+
+    Welcome to this new release of **abaper**! 🎉
+
+    ### Supported Architectures
+    - **Linux**: x86_64, ARM64, ARMv6, ARMv7
+    - **macOS**: x86_64 (Intel), ARM64 (Apple Silicon)
+    - **Windows**: x86_64
+    - **FreeBSD**: x86_64
+
+  footer: |
+    ## Docker Images
+
+    Multi-architecture Docker images are available:
+
+    ```bash
+    # Pull latest (supports AMD64 and ARM64)
+    docker pull bluefunda/abaper:{{ .Tag }}
+    docker pull bluefunda/abaper:latest
+
+    # Architecture-specific pulls
+    docker pull bluefunda/abaper:{{ .Tag }}-amd64
+    docker pull bluefunda/abaper:{{ .Tag }}-arm64
+    ```
+
+    ## Installation Examples
+
+    ### macOS (Intel & Apple Silicon)
+    ```bash
+    # Homebrew (recommended)
+    brew install bluefunda/tap/abaper
+
+    # Manual installation
+    # Intel Macs
+    curl -L https://github.com/bluefunda/abaper/releases/download/{{ .Tag }}/abaper_{{ .Tag }}_Darwin_x86_64.tar.gz | tar xz
+    # Apple Silicon Macs
+    curl -L https://github.com/bluefunda/abaper/releases/download/{{ .Tag }}/abaper_{{ .Tag }}_Darwin_arm64.tar.gz | tar xz
+    ```
+
+    ### Linux
+    ```bash
+    # AMD64
+    curl -L https://github.com/bluefunda/abaper/releases/download/{{ .Tag }}/abaper_{{ .Tag }}_Linux_x86_64.tar.gz | tar xz
+    # ARM64 (e.g., Raspberry Pi 4, AWS Graviton)
+    curl -L https://github.com/bluefunda/abaper/releases/download/{{ .Tag }}/abaper_{{ .Tag }}_Linux_arm64.tar.gz | tar xz
+    # ARMv7 (e.g., Raspberry Pi 3)
+    curl -L https://github.com/bluefunda/abaper/releases/download/{{ .Tag }}/abaper_{{ .Tag }}_Linux_armv7.tar.gz | tar xz
+    ```
+
+    **Full Changelog**: https://github.com/bluefunda/abaper/compare/{{ .PreviousTag }}...{{ .Tag }}
+  extra_files:
+    - glob: ./LICENSE
+
+# Linux packages - Simplified configuration
+nfpms:
+  - id: packages
+    package_name: abaper
+    vendor: BlueFunda, Inc.
+    homepage: https://github.com/bluefunda/abaper
+    maintainer: BlueFunda, Inc. <info@bluefunda.com>
+    description: |-
+      CLI for ABAP Development Tool by BlueFunda, Inc.
+      A powerful command-line tool for SAP ABAP development and automation.
+    license: Apache 2.0
+    formats:
+      - deb
+      - rpm
+      - apk
+    dependencies:
+      - git
+    recommends:
+      - ca-certificates
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/abaper/copyright
+        file_info:
+          mode: 0644
+      - src: ./README.md
+        dst: /usr/share/doc/abaper/README.md
+        file_info:
+          mode: 0644
+    rpm:
+      group: Development/Tools
+      compression: lzma
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - changelog-file-missing-in-native-package
+
+# Homebrew Casks - For pre-compiled binaries (recommended over brews)
+homebrew_casks:
+  - name: abaper
+    ids:
+      - default
+    repository:
+      owner: bluefunda
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/bluefunda/abaper"
+    description: "CLI for ABAP Development Tool by BlueFunda, Inc. - Supports Intel and Apple Silicon Macs"
+    license: "Apache 2.0"
+    skip_upload: auto
+    binary: abaper
+    # Post-install hook to remove quarantine (since binary isn't signed/notarized)
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/abaper"]
+          end
+
+# Docker images - Multi-architecture support
+dockers:
+  # AMD64 images
+  - id: amd64
+    image_templates:
+      - "bluefunda/abaper:{{ .Version }}-amd64"
+      - "bluefunda/abaper:latest-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    extra_files:
+      - go.mod
+      - go.sum
+      - main.go
+      - cli.go
+      - adt_client.go
+      - rest/
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/bluefunda/abaper"
+      - "--label=org.opencontainers.image.description=CLI for ABAP Development Tool"
+      - "--label=org.opencontainers.image.vendor=BlueFunda, Inc."
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{.Version}}"
+      - "--build-arg=BUILD_TIME={{.Date}}"
+      - "--build-arg=GIT_COMMIT={{.FullCommit}}"
+      - "--build-arg=BUILD_MODE=prod"
+      - "--build-arg=TARGETARCH=amd64"
+    goarch: amd64
+
+  # ARM64 images
+  - id: arm64
+    image_templates:
+      - "bluefunda/abaper:{{ .Version }}-arm64"
+      - "bluefunda/abaper:latest-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    extra_files:
+      - go.mod
+      - go.sum
+      - main.go
+      - cli.go
+      - adt_client.go
+      - rest/
+    build_flag_templates:
+      - "--pull"
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/bluefunda/abaper"
+      - "--label=org.opencontainers.image.description=CLI for ABAP Development Tool - ARM64 Edition"
+      - "--label=org.opencontainers.image.vendor=BlueFunda, Inc."
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+      - "--build-arg=VERSION={{.Version}}"
+      - "--build-arg=BUILD_TIME={{.Date}}"
+      - "--build-arg=GIT_COMMIT={{.FullCommit}}"
+      - "--build-arg=BUILD_MODE=prod"
+      - "--build-arg=TARGETARCH=arm64"
+    goarch: arm64
+
+# Docker manifests for multi-arch images
+docker_manifests:
+  - name_template: "bluefunda/abaper:{{ .Version }}"
+    image_templates:
+      - "bluefunda/abaper:{{ .Version }}-amd64"
+      - "bluefunda/abaper:{{ .Version }}-arm64"
+  - name_template: "bluefunda/abaper:latest"
+    image_templates:
+      - "bluefunda/abaper:latest-amd64"
+      - "bluefunda/abaper:latest-arm64"
+
+# Universal Binary for macOS (combines Intel + Apple Silicon)
+universal_binaries:
+  - id: darwin-universal
+    name_template: "abaper"
+    replace: false
+    ids:
+      - abaper
+
+# Additional metadata for better releases
+metadata:
+  mod_timestamp: "{{ .CommitTimestamp }}"
