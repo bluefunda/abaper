@@ -1,0 +1,35 @@
+name: abaper
+synopsis: ABAP Development Tool - CLI and REST Services (No AI)
+description: |-
+    ABAP Development Tool - CLI and REST Services (No AI)
+
+    A comprehensive CLI tool for interacting with SAP ABAP systems via ADT.
+    Supports retrieving source code, searching objects, and testing connections.
+options:
+    - name: adt-client
+      usage: SAP client (or set SAP_CLIENT)
+    - name: adt-host
+      usage: SAP system host (or set SAP_HOST)
+    - name: adt-password
+      usage: SAP password (or set SAP_PASSWORD)
+    - name: adt-username
+      usage: SAP username (or set SAP_USERNAME)
+    - name: config
+      usage: Configuration file path
+    - name: help
+      shorthand: h
+      default_value: "false"
+      usage: help for abaper
+    - name: log-file
+      usage: Log to specified file (auto-creates directory)
+    - name: normal
+      default_value: "false"
+      usage: Normal mode (show standard output)
+    - name: quiet
+      shorthand: q
+      default_value: "true"
+      usage: Quiet mode (DEFAULT - minimal CLI output)
+    - name: verbose
+      shorthand: v
+      default_value: "false"
+      usage: Verbose mode (detailed output + debug info)

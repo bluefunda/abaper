@@ -3,10 +3,17 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/bluefunda/abaper/types"
 )
 
-// POSIX-compliant command execution
-// This file replaces the complex cli_commands.go with a simpler, POSIX-compliant approach
+// CommandConfig holds command-specific configuration
+type CommandConfig struct {
+	Action     string // get, connect, search, list
+	ObjectType string // program, class, function, etc.
+	ObjectName string
+	Args       []string // Additional arguments
+}
 
 // normalizeObjectType normalizes object type strings
 func normalizeObjectType(objectType string) string {
@@ -32,8 +39,8 @@ func normalizeObjectType(objectType string) string {
 	}
 }
 
-// handleGet retrieves ABAP object source code
-func handleGet(config *Config, adtClient *ADTClient) error {
+// HandleGet retrieves ABAP object source code
+func HandleGet(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
 	if config.ObjectType == "" {
 		return fmt.Errorf("object type required for get action")
 	}
@@ -44,9 +51,11 @@ func handleGet(config *Config, adtClient *ADTClient) error {
 	objectType := normalizeObjectType(config.ObjectType)
 	objectName := strings.ToUpper(config.ObjectName)
 
-	fmt.Printf("📄 Retrieving %s %s...\n", objectType, objectName)
+	if !quiet || normal {
+		fmt.Printf("📄 Retrieving %s %s...\n", objectType, objectName)
+	}
 
-	var source *ADTSourceCode
+	var source *types.ADTSourceCode
 	var err error
 
 	switch objectType {
@@ -56,7 +65,7 @@ func handleGet(config *Config, adtClient *ADTClient) error {
 		source, err = adtClient.GetClass(objectName)
 	case "FUNCTION":
 		if len(config.Args) == 0 {
-			return fmt.Errorf("function group required for function: %s get function <n> <group>", PROGRAM_NAME)
+			return fmt.Errorf("function group required for function: %s get function <n> <group>", "abaper")
 		}
 		functionGroup := strings.ToUpper(config.Args[0])
 		source, err = adtClient.GetFunction(objectName, functionGroup)
@@ -69,7 +78,7 @@ func handleGet(config *Config, adtClient *ADTClient) error {
 	case "TABLE":
 		source, err = adtClient.GetTable(objectName)
 	case "PACKAGE":
-		return handleGetPackage(config, adtClient)
+		return HandleGetPackage(config, adtClient, quiet, normal)
 	default:
 		return fmt.Errorf("unsupported object type: %s", objectType)
 	}
@@ -78,6 +87,7 @@ func handleGet(config *Config, adtClient *ADTClient) error {
 		return fmt.Errorf("failed to retrieve %s %s: %w", objectType, objectName, err)
 	}
 
+	// Always output the source code (even in quiet mode, this is the primary output)
 	fmt.Printf("\n=== %s %s ===\n", objectType, objectName)
 	fmt.Printf("Type: %s\n", source.ObjectType)
 	if source.Version != "" {
@@ -91,11 +101,13 @@ func handleGet(config *Config, adtClient *ADTClient) error {
 	return nil
 }
 
-// handleGetPackage retrieves package contents
-func handleGetPackage(config *Config, adtClient *ADTClient) error {
+// HandleGetPackage retrieves package contents
+func HandleGetPackage(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
 	packageName := strings.ToUpper(config.ObjectName)
 
-	fmt.Printf("📦 Retrieving package %s...\n", packageName)
+	if !quiet || normal {
+		fmt.Printf("📦 Retrieving package %s...\n", packageName)
+	}
 
 	packageInfo, err := adtClient.GetPackageContents(packageName)
 	if err != nil {
@@ -112,7 +124,7 @@ func handleGetPackage(config *Config, adtClient *ADTClient) error {
 		fmt.Println(strings.Repeat("=", 80))
 
 		// Group objects by type
-		objectsByType := make(map[string][]ADTObject)
+		objectsByType := make(map[string][]types.ADTObject)
 		for _, obj := range packageInfo.Objects {
 			objectsByType[obj.Type] = append(objectsByType[obj.Type], obj)
 		}
@@ -133,10 +145,10 @@ func handleGetPackage(config *Config, adtClient *ADTClient) error {
 	return nil
 }
 
-// handleSearch searches for ABAP objects
-func handleSearch(config *Config, adtClient *ADTClient) error {
+// HandleSearch searches for ABAP objects
+func HandleSearch(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
 	if config.ObjectType != "objects" {
-		return fmt.Errorf("search type must be 'objects': %s search objects <pattern>", PROGRAM_NAME)
+		return fmt.Errorf("search type must be 'objects': %s search objects <pattern>", "abaper")
 	}
 	if config.ObjectName == "" {
 		return fmt.Errorf("search pattern required")
@@ -148,11 +160,13 @@ func handleSearch(config *Config, adtClient *ADTClient) error {
 		objectTypes = append(objectTypes, normalizeObjectType(arg))
 	}
 
-	fmt.Printf("🔍 Searching for '%s'", pattern)
-	if len(objectTypes) > 0 {
-		fmt.Printf(" (types: %s)", strings.Join(objectTypes, ", "))
+	if !quiet || normal {
+		fmt.Printf("🔍 Searching for '%s'", pattern)
+		if len(objectTypes) > 0 {
+			fmt.Printf(" (types: %s)", strings.Join(objectTypes, ", "))
+		}
+		fmt.Println("...")
 	}
-	fmt.Println("...")
 
 	results, err := adtClient.SearchObjects(pattern, objectTypes)
 	if err != nil {
@@ -168,7 +182,7 @@ func handleSearch(config *Config, adtClient *ADTClient) error {
 		fmt.Println(strings.Repeat("=", 80))
 
 		// Group results by type
-		resultsByType := make(map[string][]ADTObject)
+		resultsByType := make(map[string][]types.ADTObject)
 		for _, obj := range results.Objects {
 			resultsByType[obj.Type] = append(resultsByType[obj.Type], obj)
 		}
@@ -194,30 +208,32 @@ func handleSearch(config *Config, adtClient *ADTClient) error {
 	return nil
 }
 
-// handleList lists objects (packages, etc.)
-func handleList(config *Config, adtClient *ADTClient) error {
+// HandleList lists objects (packages, etc.)
+func HandleList(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
 	if config.ObjectType == "" {
-		return fmt.Errorf("list type required: %s list packages [pattern]", PROGRAM_NAME)
+		return fmt.Errorf("list type required: %s list packages [pattern]", "abaper")
 	}
 
 	listType := strings.ToLower(config.ObjectType)
 
 	switch listType {
 	case "packages", "package":
-		return handleListPackages(config, adtClient)
+		return HandleListPackages(config, adtClient, quiet, normal)
 	default:
 		return fmt.Errorf("unsupported list type: %s", listType)
 	}
 }
 
-// handleListPackages lists packages
-func handleListPackages(config *Config, adtClient *ADTClient) error {
+// HandleListPackages lists packages
+func HandleListPackages(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
 	pattern := config.ObjectName
 	if pattern == "" {
 		pattern = "*"
 	}
 
-	fmt.Printf("📦 Listing packages matching '%s'...\n", pattern)
+	if !quiet || normal {
+		fmt.Printf("📦 Listing packages matching '%s'...\n", pattern)
+	}
 
 	packages, err := adtClient.ListPackages(pattern)
 	if err != nil {
@@ -239,9 +255,11 @@ func handleListPackages(config *Config, adtClient *ADTClient) error {
 	return nil
 }
 
-// handleConnect tests ADT connection
-func handleConnect(config *Config, adtClient *ADTClient) error {
-	fmt.Println("🔌 Testing ADT connection...")
+// HandleConnect tests ADT connection
+func HandleConnect(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
+	if !quiet || normal {
+		fmt.Println("🔌 Testing ADT connection...")
+	}
 
 	if adtClient == nil {
 		return fmt.Errorf("ADT client not configured")
@@ -261,92 +279,8 @@ func handleConnect(config *Config, adtClient *ADTClient) error {
 	return nil
 }
 
-// handleHelp shows help information
-func handleHelp(config *Config) error {
-	if config.ObjectType != "" {
-		// Show specific command help
-		return showCommandHelp(config.ObjectType)
-	}
-
-	printHelp()
-	return nil
-}
-
-// showCommandHelp shows help for specific commands
-func showCommandHelp(command string) error {
-	switch command {
-	case "get":
-		fmt.Printf(`Usage: %s get TYPE NAME [ARGS...]
-
-Retrieve ABAP object source code.
-
-TYPES:
-  program     ABAP program/report
-  class       ABAP class
-  function    ABAP function module (requires function group)
-  include     ABAP include
-  interface   ABAP interface
-  structure   ABAP structure
-  table       ABAP table
-  package     ABAP package contents
-
-EXAMPLES:
-  %s get program ZTEST
-  %s get class ZCL_TEST
-  %s get function ZTEST_FUNC ZTEST_GROUP
-  %s get package $TMP
-`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
-
-	case "search":
-		fmt.Printf(`Usage: %s search objects PATTERN [TYPES...]
-
-Search for ABAP objects by pattern.
-
-EXAMPLES:
-  %s search objects "Z*"
-  %s search objects "CL_*" class
-  %s search objects "*TEST*" program class
-`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
-
-	case "list":
-		fmt.Printf(`Usage: %s list TYPE [PATTERN]
-
-List objects of specified type.
-
-TYPES:
-  packages    List packages
-
-EXAMPLES:
-  %s list packages
-  %s list packages "Z*"
-`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
-
-	case "connect":
-		fmt.Printf(`Usage: %s connect
-
-Test ADT connection to SAP system.
-
-This command verifies:
-- Basic connectivity to SAP system
-- ADT service availability
-- Authentication credentials
-- User permissions
-
-EXAMPLES:
-  %s connect
-`, PROGRAM_NAME, PROGRAM_NAME)
-
-	default:
-		return fmt.Errorf("unknown command: %s", command)
-	}
-
-	return nil
-}
-
-// Helper functions
-
 // getObjectSource retrieves source code for any supported object type
-func getObjectSource(config *Config, adtClient *ADTClient) (*ADTSourceCode, error) {
+func getObjectSource(config *CommandConfig, adtClient types.ADTClient) (*types.ADTSourceCode, error) {
 	objectType := normalizeObjectType(config.ObjectType)
 	objectName := strings.ToUpper(config.ObjectName)
 
@@ -374,8 +308,8 @@ func getObjectSource(config *Config, adtClient *ADTClient) (*ADTSourceCode, erro
 	}
 }
 
-// Create ADT client from configuration
-func createADTClient(config *Config) (*ADTClient, error) {
+// CreateADTClient creates ADT client from configuration
+func CreateADTClient(config *Config) (types.ADTClient, error) {
 	if config.ADTHost == "" {
 		return nil, fmt.Errorf("ADT host not configured (use --adt-host or set SAP_HOST)")
 	}
@@ -388,7 +322,7 @@ func createADTClient(config *Config) (*ADTClient, error) {
 		return nil, fmt.Errorf("ADT password not configured (use --adt-password or set SAP_PASSWORD)")
 	}
 
-	adtConfig := &ADTConfig{
+	adtConfig := &types.ADTConfig{
 		Host:     config.ADTHost,
 		Client:   config.ADTClient,
 		Username: config.ADTUsername,
@@ -409,7 +343,7 @@ func createADTClient(config *Config) (*ADTClient, error) {
 	client := NewADTClient(adtConfig)
 
 	// Force stateful session BEFORE authentication
-	client.SetSessionType(SessionStateful)
+	client.SetSessionType(types.SessionStateful)
 
 	// Test authentication
 	if err := client.Authenticate(); err != nil {

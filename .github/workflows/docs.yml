@@ -1,0 +1,132 @@
+name: Generate Documentation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+  release:
+    types: [published]
+
+jobs:
+  generate-docs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Download Go modules
+      run: go mod download
+
+    - name: Build documentation generator
+      run: go build -o cmd/gendocs cmd/gendocs.go
+
+    - name: Generate all documentation formats
+      run: |
+        ./cmd/gendocs all
+        echo "Generated documentation files:"
+        find docs -type f -name "*.md" -o -name "*.1" -o -name "*.yaml" -o -name "*.rst" | sort
+
+    - name: Generate Hugo documentation
+      run: |
+        chmod +x scripts/generate-hugo-docs.sh
+        ./scripts/generate-hugo-docs.sh
+
+    - name: Verify generated files
+      run: |
+        echo "=== Man pages ==="
+        ls -la docs/man/ || echo "No man pages found"
+        echo ""
+        echo "=== Markdown docs ==="
+        ls -la docs/markdown/ || echo "No markdown docs found"
+        echo ""
+        echo "=== Hugo content ==="
+        ls -la hugo-docs/content/ || echo "No Hugo content found"
+        find hugo-docs/content -name "*.md" | head -5
+
+    - name: Upload documentation artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation
+        path: |
+          docs/
+          hugo-docs/
+        retention-days: 30
+
+    - name: Deploy to GitHub Pages (on main branch)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: peaceiris/actions-gh-pages@v4
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: hugo-docs/content
+        destination_dir: cli-docs
+
+  validate-man-pages:
+    runs-on: ubuntu-latest
+    needs: generate-docs
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Download documentation artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: documentation
+
+    - name: Install man page utilities
+      run: sudo apt-get update && sudo apt-get install -y man-db
+
+    - name: Validate man pages
+      run: |
+        if [ -d "docs/man" ]; then
+          echo "Validating man pages..."
+          for manpage in docs/man/*.1; do
+            if [ -f "$manpage" ]; then
+              echo "Checking $manpage"
+              man --warnings -l "$manpage" > /dev/null
+              echo "✓ $manpage is valid"
+            fi
+          done
+        else
+          echo "No man pages to validate"
+        fi
+
+    - name: Test man page rendering
+      run: |
+        if [ -f "docs/man/abaper.1" ]; then
+          echo "Testing man page rendering for abaper.1:"
+          MANWIDTH=80 man --local-file docs/man/abaper.1 | head -20
+        fi

@@ -20,13 +20,40 @@ type APIResponse struct {
 	Message string      `json:"message,omitempty"`
 }
 
-// GenerateRequest for AI generation endpoints
+// ObjectRequest for object retrieval requests
+type ObjectRequest struct {
+	ObjectType string   `json:"object_type"`
+	ObjectName string   `json:"object_name"`
+	Args       []string `json:"args,omitempty"` // For function groups, etc.
+}
+
+// SearchRequest for object search requests
+type SearchRequest struct {
+	Pattern     string   `json:"pattern"`
+	ObjectTypes []string `json:"object_types,omitempty"`
+}
+
+// ListRequest for object listing requests
+type ListRequest struct {
+	ObjectType string `json:"object_type"` // "packages", etc.
+	Pattern    string `json:"pattern,omitempty"`
+}
+
+// ConnectionResponse for connection test results
+type ConnectionResponse struct {
+	Status        string `json:"status"`
+	Authenticated bool   `json:"authenticated"`
+	Timestamp     string `json:"timestamp"`
+	Message       string `json:"message"`
+}
+
+// GenerateRequest for AI generation endpoints (removed but kept for compatibility)
 type GenerateRequest struct {
 	Prompt string `json:"prompt"`
 	Stream bool   `json:"stream,omitempty"`
 }
 
-// ChatRequest for conversational AI endpoints
+// ChatRequest for conversational AI endpoints (removed but kept for compatibility)
 type ChatRequest struct {
 	Message string `json:"message"`
 	Context string `json:"context,omitempty"`
