@@ -11,6 +11,16 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
+# Generated documentation
+/docs/
+/public/
+
+# Hugo build artifacts
+.hugo_build.lock
+
+# any ai tools
+.claude/
+.openai/
 # Dependency directories (remove the comment below to include it)
 # vendor/
 

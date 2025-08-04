@@ -3,9 +3,11 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bluefunda/abaper/rest/models"
+	"github.com/bluefunda/abaper/types"
 	"go.uber.org/zap"
 )
 
@@ -20,67 +22,19 @@ type Config struct {
 	Quiet       bool
 }
 
-// ADTClient interface for dependency injection
-type ADTClient interface {
-	GetProgram(name string) (*ADTSourceCode, error)
-	GetClass(name string) (*ADTSourceCode, error)
-	GetFunction(name, functionGroup string) (*ADTSourceCode, error)
-	GetInclude(name string) (*ADTSourceCode, error)
-	GetInterface(name string) (*ADTSourceCode, error)
-	GetStructure(name string) (*ADTSourceCode, error)
-	GetTable(name string) (*ADTSourceCode, error)
-	GetPackageContents(name string) (*ADTPackageInfo, error)
-	SearchObjects(pattern string, objectTypes []string) (*ADTSearchResults, error)
-	ListPackages(pattern string) ([]*ADTPackage, error)
-	TestConnection() error
-	CreateProgram(name, description, source string) error
-}
-
-// ADTSourceCode represents source code from ADT
-type ADTSourceCode struct {
-	ObjectType string
-	Source     string
-	Version    string
-}
-
-// ADTPackageInfo represents package information
-type ADTPackageInfo struct {
-	Name        string
-	Description string
-	Objects     []ADTObject
-}
-
-// ADTObject represents an ABAP object
-type ADTObject struct {
-	Name        string
-	Type        string
-	Description string
-	Package     string
-}
-
-// ADTSearchResults represents search results
-type ADTSearchResults struct {
-	Total   int
-	Objects []ADTObject
-}
-
-// ADTPackage represents a package
-type ADTPackage struct {
-	Name        string
-	Description string
-}
-
 // RestServer handles REST API requests with CLI feature parity (no AI)
 type RestServer struct {
-	logger *zap.Logger
-	config *Config
+	logger    *zap.Logger
+	config    *Config
+	adtClient types.ADTClient // Use shared interface
 }
 
-// NewRestServer creates a new REST server instance
-func NewRestServer(config *Config, logger *zap.Logger) *RestServer {
+// NewRestServer creates a new REST server instance with ADT client
+func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient) *RestServer {
 	return &RestServer{
-		logger: logger.With(zap.String("component", "rest_server")),
-		config: config,
+		logger:    logger.With(zap.String("component", "rest_server")),
+		config:    config,
+		adtClient: adtClient,
 	}
 }
 
@@ -159,11 +113,205 @@ func (rs *RestServer) sendError(w http.ResponseWriter, message string, statusCod
 	json.NewEncoder(w).Encode(response)
 }
 
+// getObjectHandler handles object retrieval requests (CLI get command equivalent)
+func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+
+	if !rs.adtClient.IsAuthenticated() {
+		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+
+	rs.logger.Info("Getting object via REST API",
+		zap.String("type", objectType),
+		zap.String("name", objectName))
+
+	var result interface{}
+	var err error
+
+	switch objectType {
+	case "PROGRAM", "PROG":
+		result, err = rs.adtClient.GetProgram(objectName)
+	case "CLASS", "CLAS":
+		result, err = rs.adtClient.GetClass(objectName)
+	case "FUNCTION", "FUNC":
+		if len(req.Args) == 0 {
+			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
+			return
+		}
+		functionGroup := strings.ToUpper(req.Args[0])
+		result, err = rs.adtClient.GetFunction(objectName, functionGroup)
+	case "INCLUDE", "INCL":
+		result, err = rs.adtClient.GetInclude(objectName)
+	case "INTERFACE", "INTF":
+		result, err = rs.adtClient.GetInterface(objectName)
+	case "STRUCTURE", "STRU":
+		result, err = rs.adtClient.GetStructure(objectName)
+	case "TABLE", "TABL":
+		result, err = rs.adtClient.GetTable(objectName)
+	case "PACKAGE", "PACK":
+		result, err = rs.adtClient.GetPackageContents(objectName)
+	default:
+		rs.sendError(w, "unsupported object type: "+objectType, http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rs.sendSuccess(w, result)
+}
+
+// searchObjectsHandler handles object search requests (CLI search command equivalent)
+func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ObjectName == "" {
+		rs.sendError(w, "object_name (search pattern) is required", http.StatusBadRequest)
+		return
+	}
+
+	if !rs.adtClient.IsAuthenticated() {
+		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	pattern := req.ObjectName
+	var objectTypes []string
+
+	// Convert args to object types
+	for _, arg := range req.Args {
+		objectTypes = append(objectTypes, strings.ToUpper(arg))
+	}
+
+	rs.logger.Info("Searching objects via REST API",
+		zap.String("pattern", pattern),
+		zap.Strings("types", objectTypes))
+
+	results, err := rs.adtClient.SearchObjects(pattern, objectTypes)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	rs.sendSuccess(w, results)
+}
+
+// listObjectsHandler handles object listing requests (CLI list command equivalent)
+func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ObjectType == "" {
+		rs.sendError(w, "object_type is required", http.StatusBadRequest)
+		return
+	}
+
+	if !rs.adtClient.IsAuthenticated() {
+		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	listType := strings.ToLower(req.ObjectType)
+	pattern := req.ObjectName
+	if pattern == "" {
+		pattern = "*"
+	}
+
+	rs.logger.Info("Listing objects via REST API",
+		zap.String("type", listType),
+		zap.String("pattern", pattern))
+
+	switch listType {
+	case "packages", "package":
+		packages, err := rs.adtClient.ListPackages(pattern)
+		if err != nil {
+			rs.sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rs.sendSuccess(w, packages)
+	default:
+		rs.sendError(w, "unsupported list type: "+listType, http.StatusBadRequest)
+	}
+}
+
+// connectHandler handles connection test requests (CLI connect command equivalent)
+func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rs.logger.Info("Testing ADT connection via REST API")
+
+	if rs.adtClient == nil {
+		rs.sendError(w, "ADT client not configured", http.StatusInternalServerError)
+		return
+	}
+
+	if err := rs.adtClient.TestConnection(); err != nil {
+		rs.logger.Error("ADT connection test failed", zap.Error(err))
+		rs.sendError(w, "Connection failed: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	connectionStatus := map[string]any{
+		"status":        "connected",
+		"authenticated": rs.adtClient.IsAuthenticated(),
+		"timestamp":     time.Now().UTC(),
+		"message":       "ADT connection successful",
+	}
+
+	rs.sendSuccess(w, connectionStatus)
+}
+
 // healthHandler handles health check requests
 func (rs *RestServer) healthHandler(w http.ResponseWriter, r *http.Request) {
-	health := map[string]interface{}{
-		"status":    "healthy",
-		"timestamp": time.Now().UTC(),
+	adtStatus := "disconnected"
+	if rs.adtClient != nil && rs.adtClient.IsAuthenticated() {
+		adtStatus = "connected"
+	}
+
+	health := map[string]any{
+		"status":     "healthy",
+		"timestamp":  time.Now().UTC(),
+		"adt_status": adtStatus,
 		"features": map[string]bool{
 			"quiet_mode_default": true,
 			"file_logging":       true,
@@ -194,23 +342,6 @@ func (rs *RestServer) generateCodeHandler(w http.ResponseWriter, r *http.Request
 
 func (rs *RestServer) generateCodeStreamHandler(w http.ResponseWriter, r *http.Request) {
 	rs.sendError(w, "AI streaming features have been removed. This endpoint is no longer available.", http.StatusGone)
-}
-
-// Placeholder implementations for handlers that require ADT client
-func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
-	rs.sendError(w, "Get object endpoint requires ADT client integration", http.StatusNotImplemented)
-}
-
-func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Request) {
-	rs.sendError(w, "Search endpoint requires ADT client integration", http.StatusNotImplemented)
-}
-
-func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
-	rs.sendError(w, "List endpoint requires ADT client integration", http.StatusNotImplemented)
-}
-
-func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
-	rs.sendError(w, "Connect endpoint requires ADT client integration", http.StatusNotImplemented)
 }
 
 // removedAIHandler handles requests to removed AI endpoints

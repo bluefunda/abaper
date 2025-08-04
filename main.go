@@ -5,11 +5,12 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/bluefunda/abaper/rest/server"
+	"github.com/bluefunda/abaper/types"
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -31,7 +32,7 @@ var (
 	BuildMode string = "dev"
 )
 
-// Configuration with file logging and quiet default
+// Configuration
 type Config struct {
 	// Mode
 	Mode string // "server", "cli"
@@ -40,8 +41,7 @@ type Config struct {
 	// Common flags - QUIET IS NOW DEFAULT
 	Quiet   bool // Default: true
 	Verbose bool
-	Help    bool
-	Version bool
+	Normal  bool
 
 	// ADT Configuration
 	ADTHost     string
@@ -49,30 +49,210 @@ type Config struct {
 	ADTUsername string
 	ADTPassword string
 
-	// CLI specific
-	Action     string // get, connect, search, list
-	ObjectType string // program, class, function, etc.
-	ObjectName string
-	Args       []string // Additional arguments
-	ConfigFile string
-
 	// File logging support
-	LogFile string
+	LogFile    string
+	ConfigFile string
 }
 
 const (
 	PROGRAM_NAME = "abaper"
 )
 
-var logger *zap.Logger
-
-// Global ADT client cache for connection reuse
 var (
-	cachedADTClient *ADTClient
+	logger     *zap.Logger
+	rootConfig = &Config{}
+
+	// Global ADT client cache for connection reuse - now uses shared interface
+	cachedADTClient types.ADTClient
 	cachedADTConfig string
 	cacheTime       time.Time
 	cacheTimeout    = 30 * time.Minute
 )
+
+// Root command
+var rootCmd = &cobra.Command{
+	Use:   PROGRAM_NAME,
+	Short: "ABAP Development Tool - CLI and REST Services (No AI)",
+	Long: `ABAP Development Tool - CLI and REST Services (No AI)
+
+A comprehensive CLI tool for interacting with SAP ABAP systems via ADT.
+Supports retrieving source code, searching objects, and testing connections.`,
+	Version: Version,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Initialize logger
+		initLogger(rootConfig.Verbose, rootConfig.Quiet && !rootConfig.Normal, rootConfig.LogFile)
+
+		// Setup signal handling
+		setupSignalHandling()
+
+		// Setup ADT cache cleanup on exit
+		go func() {
+			defer cleanupADTCache()
+		}()
+
+		// Log startup
+		logger.Info("Application starting",
+			zap.String("version", Version),
+			zap.String("build_mode", BuildMode),
+			zap.String("build_time", BuildTime),
+			zap.String("git_commit", GitCommit),
+			zap.String("mode", rootConfig.Mode))
+
+		return nil
+	},
+}
+
+// Server command
+var serverCmd = &cobra.Command{
+	Use:   "server",
+	Short: "Run as REST API server",
+	Long:  "Start the ABAPER REST API server for HTTP-based ABAP operations.",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rootConfig.Mode = "server"
+		return runServerMode(rootConfig)
+	},
+}
+
+// Get command
+var getCmd = &cobra.Command{
+	Use:   "get TYPE NAME [ARGS...]",
+	Short: "Retrieve ABAP object source code",
+	Long: `Retrieve ABAP object source code from SAP system.
+
+TYPES:
+  program     ABAP program/report
+  class       ABAP class
+  function    ABAP function module (requires function group)
+  include     ABAP include
+  interface   ABAP interface
+  structure   ABAP structure
+  table       ABAP table
+  package     ABAP package contents
+
+EXAMPLES:
+  abaper get program ZTEST
+  abaper get class ZCL_TEST
+  abaper get function ZTEST_FUNC ZTEST_GROUP
+  abaper get package $TMP`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rootConfig.Mode = "cli"
+
+		config := &CommandConfig{
+			Action:     "get",
+			ObjectType: args[0],
+			ObjectName: args[1],
+			Args:       args[2:],
+		}
+
+		adtClient, err := getCachedADTClient(rootConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create ADT client: %w", err)
+		}
+
+		return HandleGet(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
+	},
+}
+
+// Search command
+var searchCmd = &cobra.Command{
+	Use:   "search objects PATTERN [TYPES...]",
+	Short: "Search for ABAP objects",
+	Long: `Search for ABAP objects by pattern.
+
+EXAMPLES:
+  abaper search objects "Z*"
+  abaper search objects "CL_*" class
+  abaper search objects "*TEST*" program class`,
+	Args: cobra.MinimumNArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rootConfig.Mode = "cli"
+
+		if args[0] != "objects" {
+			return fmt.Errorf("search type must be 'objects'")
+		}
+
+		config := &CommandConfig{
+			Action:     "search",
+			ObjectType: args[0],
+			ObjectName: args[1],
+			Args:       args[2:],
+		}
+
+		adtClient, err := getCachedADTClient(rootConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create ADT client: %w", err)
+		}
+
+		return HandleSearch(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
+	},
+}
+
+// List command
+var listCmd = &cobra.Command{
+	Use:   "list TYPE [PATTERN]",
+	Short: "List objects of specified type",
+	Long: `List objects of specified type.
+
+TYPES:
+  packages    List packages
+
+EXAMPLES:
+  abaper list packages
+  abaper list packages "Z*"`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rootConfig.Mode = "cli"
+
+		config := &CommandConfig{
+			Action:     "list",
+			ObjectType: args[0],
+		}
+
+		if len(args) > 1 {
+			config.ObjectName = args[1]
+		}
+
+		adtClient, err := getCachedADTClient(rootConfig)
+		if err != nil {
+			return fmt.Errorf("failed to create ADT client: %w", err)
+		}
+
+		return HandleList(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
+	},
+}
+
+// Connect command
+var connectCmd = &cobra.Command{
+	Use:   "connect",
+	Short: "Test ADT connection",
+	Long: `Test ADT connection to SAP system.
+
+This command verifies:
+- Basic connectivity to SAP system
+- ADT service availability
+- Authentication credentials
+- User permissions`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		rootConfig.Mode = "cli"
+
+		config := &CommandConfig{
+			Action: "connect",
+		}
+
+		adtClient, err := getCachedADTClient(rootConfig)
+		if err != nil {
+			if config.Action == "connect" {
+				// For connect command, show the error but continue to demonstrate the problem
+				fmt.Printf("❌ ADT connection failed: %v\n", err)
+				return err
+			}
+			return fmt.Errorf("failed to create ADT client: %w", err)
+		}
+
+		return HandleConnect(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
+	},
+}
 
 func set_host() string {
 	sapHost := os.Getenv("SAP_HOST")
@@ -82,151 +262,6 @@ func set_host() string {
 	} else {
 		return os.Getenv("SAP_HOST") // fallback to original behavior
 	}
-}
-
-// Enhanced argument parser with proper --key=value support
-func parseArgs(args []string) (*Config, error) {
-	config := &Config{
-		Mode: "cli", // Default to CLI mode
-		Port: "8013",
-		// ADT defaults from environment
-		ADTHost:     set_host(),
-		ADTClient:   os.Getenv("SAP_CLIENT"),
-		ADTUsername: os.Getenv("SAP_USERNAME"),
-		ADTPassword: os.Getenv("SAP_PASSWORD"),
-		// DEFAULT TO QUIET MODE for minimal CLI output
-		Quiet:   true, // This is the key change - default to quiet
-		Verbose: false,
-		LogFile: os.Getenv("ABAPER_LOG_FILE"), // Support env var
-	}
-
-	i := 1 // Skip program name
-	for i < len(args) {
-		arg := args[i]
-
-		// Handle --key=value format
-		if strings.Contains(arg, "=") {
-			parts := strings.SplitN(arg, "=", 2)
-			key := parts[0]
-			value := parts[1]
-
-			switch key {
-			case "--log-file":
-				config.LogFile = value
-			case "--adt-host":
-				config.ADTHost = value
-			case "--adt-client":
-				config.ADTClient = value
-			case "--adt-username":
-				config.ADTUsername = value
-			case "--adt-password":
-				config.ADTPassword = value
-			case "--config":
-				config.ConfigFile = value
-			case "-p", "--port":
-				config.Port = value
-			default:
-				return nil, fmt.Errorf("unknown option: %s", key)
-			}
-			i++
-			continue
-		}
-
-		// Handle regular arguments
-		switch arg {
-		case "-h", "--help":
-			config.Help = true
-			return config, nil
-
-		case "-v", "--version":
-			config.Version = true
-			return config, nil
-
-		case "-q", "--quiet":
-			config.Quiet = true
-			config.Verbose = false
-
-		case "-V", "--verbose":
-			config.Verbose = true
-			config.Quiet = false
-
-		case "--normal":
-			// Allow switching from default quiet to normal mode
-			config.Quiet = false
-			config.Verbose = false
-
-		case "--server":
-			config.Mode = "server"
-
-		case "-p", "--port":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.Port = args[i]
-
-		case "--log-file":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.LogFile = args[i]
-
-		case "--adt-host":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.ADTHost = args[i]
-
-		case "--adt-client":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.ADTClient = args[i]
-
-		case "--adt-username":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.ADTUsername = args[i]
-
-		case "--adt-password":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.ADTPassword = args[i]
-
-		case "--config":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("option '%s' requires an argument", arg)
-			}
-			i++
-			config.ConfigFile = args[i]
-
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return nil, fmt.Errorf("unknown option: %s", arg)
-			}
-
-			// Parse POSIX-style command: <action> <type> [<n>] [args...]
-			if config.Action == "" {
-				config.Action = arg
-			} else if config.ObjectType == "" {
-				config.ObjectType = arg
-			} else if config.ObjectName == "" {
-				config.ObjectName = arg
-			} else {
-				config.Args = append(config.Args, arg)
-			}
-		}
-		i++
-	}
-
-	return config, nil
 }
 
 // Enhanced logger with file support and quiet mode default
@@ -359,90 +394,8 @@ func setupSignalHandling() {
 	}()
 }
 
-// Enhanced help message
-func printHelp() {
-	fmt.Printf(`Usage: %s [OPTIONS] ACTION TYPE [NAME] [ARGS...]
-
-ABAP Development Tool - CLI and REST Services (No AI)
-
-ACTIONS:
-  get         Retrieve ABAP object source code
-  search      Search for ABAP objects
-  connect     Test ADT connection
-  list        List objects (packages, etc.)
-  help        Show help information
-
-OBJECT TYPES:
-  program     ABAP program/report
-  class       ABAP class
-  function    ABAP function module (requires function group)
-  include     ABAP include
-  interface   ABAP interface
-  structure   ABAP structure
-  table       ABAP table
-  package     ABAP package
-
-OPTIONS:
-  -h, --help               Show this help message and exit
-  -v, --version            Show version information and exit
-  -q, --quiet              Quiet mode (DEFAULT - minimal CLI output)
-      --normal             Normal mode (show standard output)
-  -V, --verbose            Verbose mode (detailed output + debug info)
-      --log-file=FILE      Log to specified file (auto-creates directory)
-      --log-file FILE      Log to specified file (space-separated format)
-      --server             Run as REST API server
-  -p, --port PORT      	   Port for server mode (default: 8013)
-      --adt-host=HOST      SAP system host (or set SAP_HOST)
-      --adt-client=CLIENT  SAP client (or set SAP_CLIENT)
-      --adt-username=USER  SAP username (or set SAP_USERNAME)
-      --adt-password=PASS  SAP password (or set SAP_PASSWORD)
-      --config=FILE    	   Configuration file path
-
-EXAMPLES:
-  # Default quiet mode
-  %s get program ZTEST
-
-  # Quiet with file logging (both formats work)
-  %s --log-file=./logs/abaper.log get program ZTEST
-  %s --log-file ./logs/abaper.log get program ZTEST
-
-  # Normal mode with standard output
-  %s --normal get class ZCL_TEST
-
-  # Verbose debugging
-  %s --verbose --log-file=./debug.log connect
-
-ENVIRONMENT VARIABLES:
-  SAP_HOST            SAP system host
-  SAP_CLIENT          SAP client number
-  SAP_USERNAME        SAP username
-  SAP_PASSWORD        SAP password
-  ABAPER_LOG_FILE     Default log file path
-
-EXIT STATUS:
-  0    Success
-  1    General error
-  2    Invalid usage
-  130  Interrupted by user (Ctrl+C)
-  143  Terminated by signal
-
-Report bugs to: https://github.com/bluefunda/abaper/issues
-Organization: BlueFunda, Inc.
-`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
-}
-
-// Version info
-func printVersion() {
-	fmt.Printf("%s %s\n", PROGRAM_NAME, Version)
-	fmt.Printf("Built: %s\n", BuildTime)
-	fmt.Printf("Commit: %s\n", GitCommit)
-	fmt.Printf("Mode: %s\n", BuildMode)
-	fmt.Printf("Features: CLI and REST Services (No AI)\n")
-	fmt.Printf("POSIX Compliant: Yes\n")
-}
-
 // getCachedADTClient returns cached client if valid, creates new one otherwise
-func getCachedADTClient(config *Config) (*ADTClient, error) {
+func getCachedADTClient(config *Config) (types.ADTClient, error) {
 	// Create cache key from config
 	configKey := fmt.Sprintf("%s|%s|%s|%s",
 		config.ADTHost, config.ADTClient, config.ADTUsername, config.ADTPassword)
@@ -454,7 +407,7 @@ func getCachedADTClient(config *Config) (*ADTClient, error) {
 		cachedADTClient.IsAuthenticated() {
 
 		// Optional: Test connection with lightweight ping (can be disabled for performance)
-		if err := cachedADTClient.ping(); err != nil {
+		if err := cachedADTClient.TestConnection(); err != nil {
 			logger.Info("Cached ADT client failed ping test, creating new client", zap.Error(err))
 			// Continue to create new client
 		} else {
@@ -475,7 +428,7 @@ func getCachedADTClient(config *Config) (*ADTClient, error) {
 		logger.Info("Creating first ADT client", zap.String("host", config.ADTHost))
 	}
 
-	client, err := createADTClient(config)
+	client, err := CreateADTClient(config)
 	if err != nil {
 		return nil, err
 	}
@@ -502,6 +455,36 @@ func cleanupADTCache() {
 	}
 }
 
+// runServerMode starts the REST server with CLI and ADT integration
+func runServerMode(config *Config) error {
+	logger.Info("Starting in server mode", zap.String("port", config.Port))
+
+	// Create ADT client for server mode
+	adtClient, err := getCachedADTClient(config)
+	if err != nil {
+		logger.Error("Failed to create ADT client for server mode", zap.Error(err))
+		return fmt.Errorf("failed to create ADT client for server: %w", err)
+	}
+
+	logger.Info("ADT client created successfully for server mode",
+		zap.String("host", config.ADTHost),
+		zap.Bool("authenticated", adtClient.IsAuthenticated()))
+
+	serverConfig := &server.Config{
+		ADTHost:     config.ADTHost,
+		ADTClient:   config.ADTClient,
+		ADTUsername: config.ADTUsername,
+		ADTPassword: config.ADTPassword,
+		Verbose:     config.Verbose,
+		Quiet:       config.Quiet && !config.Normal,
+	}
+
+	// Pass ADT client directly to server - no adapter needed!
+	restServer := server.NewRestServer(serverConfig, logger, adtClient)
+	restServer.Start(config.Port)
+	return nil
+}
+
 // Error handling helper
 func exitWithError(err error, exitCode int) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", PROGRAM_NAME, err)
@@ -512,126 +495,158 @@ func exitWithError(err error, exitCode int) {
 	os.Exit(exitCode)
 }
 
-// runServerMode starts the REST server with CLI and ADT integration
-func runServerMode(config *Config) {
-	logger.Info("Starting in server mode", zap.String("port", config.Port))
-
-	serverConfig := &server.Config{
-		ADTHost:     config.ADTHost,
-		ADTClient:   config.ADTClient,
-		ADTUsername: config.ADTUsername,
-		ADTPassword: config.ADTPassword,
-		Verbose:     config.Verbose,
-		Quiet:       config.Quiet,
-	}
-	restServer := server.NewRestServer(serverConfig, logger)
-	restServer.Start(config.Port)
-}
-
-// runCLIMode starts the CLI interface
-func runCLIMode(config *Config) {
-	logger.Info("Starting in CLI mode",
-		zap.String("action", config.Action),
-		zap.String("object_type", config.ObjectType),
-		zap.String("object_name", config.ObjectName))
-
-	// Create ADT client for commands that need it
-	var adtClient *ADTClient
-	var err error
-
-	needsADT := map[string]bool{
-		"get": true, "search": true, "list": true, "connect": true,
-	}
-
-	if needsADT[config.Action] {
-		// Use cached ADT client for better performance
-		adtClient, err = getCachedADTClient(config)
-		if err != nil {
-			if config.Action == "connect" {
-				// For connect command, show the error but continue to demonstrate the problem
-				fmt.Printf("❌ ADT connection failed: %v\n", err)
-				os.Exit(ExitGeneralError)
-			} else {
-				exitWithError(fmt.Errorf("failed to create ADT client: %w", err), ExitGeneralError)
-			}
-		}
-	}
-
-	// Execute the POSIX command
-	if err := executeCommand(config, adtClient); err != nil {
-		exitWithError(err, ExitGeneralError)
-	}
-}
-
 // Execute POSIX-style command
-func executeCommand(config *Config, adtClient *ADTClient) error {
+func executeCommand(config *CommandConfig, adtClient types.ADTClient) error {
 	switch config.Action {
 	case "get":
-		return handleGet(config, adtClient)
+		return HandleGet(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
 	case "search":
-		return handleSearch(config, adtClient)
+		return HandleSearch(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
 	case "list":
-		return handleList(config, adtClient)
+		return HandleList(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
 	case "connect":
-		return handleConnect(config, adtClient)
+		return HandleConnect(config, adtClient, rootConfig.Quiet, rootConfig.Normal)
 	case "help":
 		return handleHelp(config)
 	case "":
-		if config.Mode == "cli" {
-			return fmt.Errorf("action required. Try '%s help' for usage information", PROGRAM_NAME)
-		}
-		return nil
+		return fmt.Errorf("action required. Try '%s --help' for usage information", PROGRAM_NAME)
 	default:
-		return fmt.Errorf("unknown action: %s. Try '%s help' for available actions", config.Action, PROGRAM_NAME)
+		return fmt.Errorf("unknown action: %s. Try '%s --help' for available actions", config.Action, PROGRAM_NAME)
 	}
+}
+
+// handleHelp shows help information
+func handleHelp(config *CommandConfig) error {
+	if config.ObjectType != "" {
+		// Show specific command help
+		return showCommandHelp(config.ObjectType)
+	}
+
+	rootCmd.Help()
+	return nil
+}
+
+// showCommandHelp shows help for specific commands
+func showCommandHelp(command string) error {
+	switch command {
+	case "get":
+		fmt.Printf(`Usage: %s get TYPE NAME [ARGS...]
+
+Retrieve ABAP object source code.
+
+TYPES:
+  program     ABAP program/report
+  class       ABAP class
+  function    ABAP function module (requires function group)
+  include     ABAP include
+  interface   ABAP interface
+  structure   ABAP structure
+  table       ABAP table
+  package     ABAP package contents
+
+EXAMPLES:
+  %s get program ZTEST
+  %s get class ZCL_TEST
+  %s get function ZTEST_FUNC ZTEST_GROUP
+  %s get package $TMP
+`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
+
+	case "search":
+		fmt.Printf(`Usage: %s search objects PATTERN [TYPES...]
+
+Search for ABAP objects by pattern.
+
+EXAMPLES:
+  %s search objects "Z*"
+  %s search objects "CL_*" class
+  %s search objects "*TEST*" program class
+`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
+
+	case "list":
+		fmt.Printf(`Usage: %s list TYPE [PATTERN]
+
+List objects of specified type.
+
+TYPES:
+  packages    List packages
+
+EXAMPLES:
+  %s list packages
+  %s list packages "Z*"
+`, PROGRAM_NAME, PROGRAM_NAME, PROGRAM_NAME)
+
+	case "connect":
+		fmt.Printf(`Usage: %s connect
+
+Test ADT connection to SAP system.
+
+This command verifies:
+- Basic connectivity to SAP system
+- ADT service availability
+- Authentication credentials
+- User permissions
+
+EXAMPLES:
+  %s connect
+`, PROGRAM_NAME, PROGRAM_NAME)
+
+	default:
+		return fmt.Errorf("unknown command: %s", command)
+	}
+
+	return nil
+}
+
+func init() {
+	// Initialize configuration with defaults
+	rootConfig.Mode = "cli"
+	rootConfig.Port = "8080"
+	rootConfig.ADTHost = set_host()
+	rootConfig.ADTClient = os.Getenv("SAP_CLIENT")
+	rootConfig.ADTUsername = os.Getenv("SAP_USERNAME")
+	rootConfig.ADTPassword = os.Getenv("SAP_PASSWORD")
+	rootConfig.Quiet = true // DEFAULT TO QUIET MODE
+	rootConfig.LogFile = os.Getenv("ABAPER_LOG_FILE")
+
+	// Add persistent flags
+	rootCmd.PersistentFlags().BoolVarP(&rootConfig.Quiet, "quiet", "q", true, "Quiet mode (DEFAULT - minimal CLI output)")
+	rootCmd.PersistentFlags().BoolVar(&rootConfig.Normal, "normal", false, "Normal mode (show standard output)")
+	rootCmd.PersistentFlags().BoolVarP(&rootConfig.Verbose, "verbose", "v", false, "Verbose mode (detailed output + debug info)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.LogFile, "log-file", rootConfig.LogFile, "Log to specified file (auto-creates directory)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.ADTHost, "adt-host", rootConfig.ADTHost, "SAP system host (or set SAP_HOST)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.ADTClient, "adt-client", rootConfig.ADTClient, "SAP client (or set SAP_CLIENT)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.ADTUsername, "adt-username", rootConfig.ADTUsername, "SAP username (or set SAP_USERNAME)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.ADTPassword, "adt-password", rootConfig.ADTPassword, "SAP password (or set SAP_PASSWORD)")
+	rootCmd.PersistentFlags().StringVar(&rootConfig.ConfigFile, "config", "", "Configuration file path")
+
+	// Server command flags
+	serverCmd.Flags().StringVarP(&rootConfig.Port, "port", "p", "8080", "Port for server mode")
+
+	// Add subcommands
+	rootCmd.AddCommand(serverCmd)
+	rootCmd.AddCommand(getCmd)
+	rootCmd.AddCommand(searchCmd)
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(connectCmd)
+
+	// Customize version template
+	rootCmd.SetVersionTemplate(`{{.Use}} {{.Version}}
+Built: ` + BuildTime + `
+Commit: ` + GitCommit + `
+Mode: ` + BuildMode + `
+Features: CLI and REST Services (No AI)
+POSIX Compliant: Yes
+`)
 }
 
 // Main function
 func main() {
-	// Parse command line arguments
-	config, err := parseArgs(os.Args)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", PROGRAM_NAME, err)
-		fmt.Fprintf(os.Stderr, "Try '%s --help' for more information.\n", PROGRAM_NAME)
-		os.Exit(ExitMisuse)
-	}
-
-	// Handle help and version first
-	if config.Help {
-		printHelp()
-		os.Exit(ExitSuccess)
-	}
-
-	if config.Version {
-		printVersion()
-		os.Exit(ExitSuccess)
-	}
-
-	// Initialize logger
-	initLogger(config.Verbose, config.Quiet, config.LogFile)
-	defer logger.Sync()
-
-	// Setup ADT cache cleanup on exit
-	defer cleanupADTCache()
-
-	// Setup signal handling
-	setupSignalHandling()
-
-	// Log startup
-	logger.Info("Application starting",
-		zap.String("version", Version),
-		zap.String("build_mode", BuildMode),
-		zap.String("build_time", BuildTime),
-		zap.String("git_commit", GitCommit),
-		zap.String("mode", config.Mode))
-
-	// Route to appropriate mode
-	switch config.Mode {
-	case "server":
-		runServerMode(config)
-	case "cli":
-		runCLIMode(config)
-	default:
-		exitWithError(fmt.Errorf("unknown mode: %s", config.Mode), ExitMisuse)
+	// Execute the root command
+	if err := rootCmd.Execute(); err != nil {
+		if logger != nil {
+			logger.Error("Command execution failed", zap.Error(err))
+			logger.Sync()
+		}
+		os.Exit(ExitGeneralError)
 	}
 }

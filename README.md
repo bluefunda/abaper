@@ -48,7 +48,7 @@ docker pull bluefunda/abaper:latest
 docker run --rm bluefunda/abaper:latest abaper --version
 
 # Run server
-docker run -p 8013:8013 bluefunda/abaper:latest abaper --server
+docker run -p 8080:8080 bluefunda/abaper:latest abaper --server
 ```
 
 ### **Manual Installation**
@@ -120,11 +120,6 @@ abaper get program ZTEST
 abaper get class ZCL_UTILITY
 abaper get function RFC_READ_TABLE SRFC
 
-# AI analysis
-abaper analyze program ZTEST
-abaper review class ZCL_UTILITY
-abaper optimize function MY_FUNC MY_GROUP
-
 # Search and discovery
 abaper search objects "Z*"
 abaper list packages
@@ -186,7 +181,7 @@ abaper [OPTIONS] ACTION TYPE [NAME] [ARGS...]
 - `-V, --verbose` - Enable verbose output with debug info
 - `--log-file=FILE` - Log to specified file (auto-creates directory)
 - `--server` - Run as REST API server
-- `-p, --port PORT` - Port for server mode (default: 8013)
+- `-p, --port PORT` - Port for server mode (default: 8080)
 - `--adt-host=HOST` - SAP system host
 - `--adt-client=CLIENT` - SAP client
 - `--adt-username=USER` - SAP username
@@ -216,7 +211,6 @@ time abaper connect                    # ~4 seconds
 time abaper get program ZTEST          # ~0.6 seconds
 time abaper get class ZCL_TEST         # ~0.5 seconds
 time abaper list packages              # ~0.5 seconds
-time abaper analyze program ZTEST      # ~0.5s + AI time
 ```
 
 ### **Cache Management**
@@ -249,21 +243,6 @@ abaper get table ZTABLE_PRODUCTS
 abaper get package $TMP
 ```
 
-### **AI-Powered Analysis**
-```bash
-# Code analysis
-abaper analyze program ZTEST
-abaper analyze class ZCL_SALES_PROCESSOR
-
-# Code review
-abaper review program Z_FINANCIAL_REPORT
-abaper review class ZCL_INTEGRATION_HANDLER
-
-# Performance optimization
-abaper optimize program Z_BATCH_PROCESSOR
-abaper optimize function Z_HEAVY_CALCULATION Z_MATH_GROUP
-```
-
 ### **Search and Discovery**
 ```bash
 # Search objects by pattern
@@ -276,14 +255,6 @@ abaper list packages
 abaper list packages "Z*"
 abaper list packages "*DEV*"
 ```
-
-### **Object Creation**
-```bash
-# Create with AI assistance
-abaper create program Z_NEW_REPORT "Sales report with customer analysis"
-abaper create class ZCL_NEW_SERVICE "RESTful service for customer data"
-```
-
 ### **System Operations**
 ```bash
 # Test connection
@@ -299,7 +270,7 @@ abaper help analyze           # Help for 'analyze' command
 
 ### **Start Server**
 ```bash
-# Default port 8013
+# Default port 8080
 abaper --server
 
 # Custom port
@@ -310,8 +281,6 @@ abaper --server --log-file=./logs/server.log
 ```
 
 ### **REST API Endpoints**
-- `POST /generate-code` - Code generation
-- `POST /generate-code-stream` - Streaming code generation
 - `GET /health` - Health check
 - `GET /version` - Version information
 
@@ -321,7 +290,7 @@ For Docker deployment examples, see [`examples/docker/`](examples/docker/).
 
 ```bash
 # Quick start with published image
-docker run -p 8013:8013 \
+docker run -p 8080:8080 \
   -e SAP_HOST="your-host:8000" \
   -e SAP_USERNAME="your-user" \
   -e SAP_PASSWORD="your-password" \
