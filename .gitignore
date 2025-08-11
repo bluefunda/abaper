@@ -56,6 +56,13 @@ Thumbs.db
 .env.local
 .env.*.local
 
+# Hurl configuration with credentials
+hurl/config.env
+hurl/postman_collection.json
+
+# Postman collections (may contain credentials)
+postman/*.postman_collection.json
+
 # Temporary files
 *.tmp
 *.temp

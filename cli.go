@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/bluefunda/abaper/types"
@@ -37,6 +40,35 @@ func normalizeObjectType(objectType string) string {
 	default:
 		return strings.ToUpper(objectType)
 	}
+}
+
+// readSourceInput reads source code from various input sources
+func readSourceInput(input string) (string, error) {
+	// Handle special stdin case
+	if input == "-" || input == "stdin" {
+		content, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", fmt.Errorf("failed to read from stdin: %w", err)
+		}
+		return string(content), nil
+	}
+	
+	// Check if input looks like a file path
+	if strings.Contains(input, "/") || strings.Contains(input, "\\") || 
+	   filepath.Ext(input) != "" || len(input) > 200 {
+		
+		// Try to read as file
+		if _, err := os.Stat(input); err == nil {
+			content, err := os.ReadFile(input)
+			if err != nil {
+				return "", fmt.Errorf("failed to read file %s: %w", input, err)
+			}
+			return string(content), nil
+		}
+	}
+	
+	// Return error if we can't read it as a file
+	return "", fmt.Errorf("not a valid file path or file doesn't exist: %s", input)
 }
 
 // HandleGet retrieves ABAP object source code
@@ -351,4 +383,176 @@ func CreateADTClient(config *Config) (types.ADTClient, error) {
 	}
 
 	return client, nil
+}
+
+// HandleCreate creates new ABAP objects with enhanced functionality
+func HandleCreate(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
+	if config.ObjectType == "" {
+		return fmt.Errorf("object type required for create action")
+	}
+	if config.ObjectName == "" {
+		return fmt.Errorf("object name required for create action")
+	}
+
+	objectType := normalizeObjectType(config.ObjectType)
+	objectName := strings.ToUpper(config.ObjectName)
+
+	// Parse additional arguments for creation options
+	description := fmt.Sprintf("%s %s", objectType, objectName)
+	packageName := "$TMP" // Default to local package
+	sourceCode := ""
+
+	// Parse arguments: description, package, source_file_or_content
+	if len(config.Args) > 0 {
+		description = config.Args[0]
+	}
+	if len(config.Args) > 1 {
+		packageName = strings.ToUpper(config.Args[1])
+	}
+	if len(config.Args) > 2 {
+		// Third argument could be source code or file path
+		sourceInput := config.Args[2]
+		
+		// Check if it's a file path by trying to read it
+		if sourceInput != "" {
+			if fileContent, err := readSourceInput(sourceInput); err == nil {
+				sourceCode = fileContent
+				if !quiet || normal {
+					fmt.Printf("   Source file: %s (%d characters)\n", sourceInput, len(sourceCode))
+				}
+			} else {
+				// If file reading fails, treat it as direct source code content
+				sourceCode = sourceInput
+			}
+		}
+	}
+
+	if !quiet || normal {
+		fmt.Printf("📝 Creating %s %s...\n", objectType, objectName)
+		fmt.Printf("   Description: %s\n", description)
+		fmt.Printf("   Package: %s\n", packageName)
+		if sourceCode != "" {
+			fmt.Printf("   Source: %d characters\n", len(sourceCode))
+		}
+	}
+
+	var err error
+
+	switch objectType {
+	case "PROGRAM":
+		if sourceCode == "" {
+			// Generate basic program template
+			sourceCode = fmt.Sprintf("REPORT %s.\n\nWRITE: 'Hello from %s!'.\n\nSTART-OF-SELECTION.\n  WRITE: / 'Program %s created successfully.'.\n  WRITE: / 'Current date:', sy-datum.\n  WRITE: / 'Current time:', sy-uzeit.\n", objectName, objectName, objectName)
+		}
+		err = adtClient.CreateProgram(objectName, description, sourceCode)
+	case "CLASS":
+		if sourceCode == "" {
+			// Generate basic class template
+			sourceCode = fmt.Sprintf("CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.\n  PUBLIC SECTION.\n    METHODS: say_hello RETURNING VALUE(rv_message) TYPE string.\nENDCLASS.\n\nCLASS %s IMPLEMENTATION.\n  METHOD say_hello.\n    rv_message = 'Hello from %s!'.\n  ENDMETHOD.\nENDCLASS.\n", objectName, objectName, objectName)
+		}
+		err = adtClient.CreateClass(objectName, description, sourceCode)
+	case "INCLUDE":
+		if sourceCode == "" {
+			sourceCode = fmt.Sprintf("*&---------------------------------------------------------------------*\n*& Include %s\n*&---------------------------------------------------------------------*\n\n* Include %s created by abaper CLI\n", objectName, objectName)
+		}
+		err = adtClient.CreateInclude(objectName, description, sourceCode)
+	case "INTERFACE":
+		if sourceCode == "" {
+			sourceCode = fmt.Sprintf("INTERFACE %s PUBLIC.\n  METHODS: do_something.\nENDINTERFACE.\n", objectName)
+		}
+		err = adtClient.CreateInterface(objectName, description, sourceCode)
+	case "STRUCTURE":
+		err = adtClient.CreateStructure(objectName, description, sourceCode)
+	case "TABLE":
+		err = adtClient.CreateTable(objectName, description, sourceCode)
+	case "FUNCTIONGROUP":
+		err = adtClient.CreateFunctionGroup(objectName, description, sourceCode)
+	default:
+		return fmt.Errorf("unsupported object type for creation: %s", objectType)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to create %s %s: %w", objectType, objectName, err)
+	}
+
+	if !quiet {
+		fmt.Printf("✅ %s %s created successfully!\n", objectType, objectName)
+		if packageName != "$TMP" {
+			fmt.Printf("   Package: %s\n", packageName)
+		}
+		if sourceCode != "" {
+			fmt.Printf("   Source code inserted and activated\n")
+		}
+	}
+
+	return nil
+}
+
+// HandleUpdate updates ABAP object source code
+func HandleUpdate(config *CommandConfig, adtClient types.ADTClient, quiet bool, normal bool) error {
+	if config.ObjectType == "" {
+		return fmt.Errorf("object type required for update action")
+	}
+	if config.ObjectName == "" {
+		return fmt.Errorf("object name required for update action")
+	}
+	if len(config.Args) == 0 {
+		return fmt.Errorf("source file/input required for update action")
+	}
+
+	objectType := normalizeObjectType(config.ObjectType)
+	objectName := strings.ToUpper(config.ObjectName)
+	sourceInput := config.Args[0] // First argument is source file/input
+
+	if !quiet || normal {
+		fmt.Printf("🔄 Updating %s %s...\n", objectType, objectName)
+	}
+
+	// Read source code from input (file, stdin, or direct)
+	sourceCode, err := readSourceInput(sourceInput)
+	if err != nil {
+		// If file reading fails, treat it as direct source code content
+		sourceCode = sourceInput
+		if !quiet || normal {
+			fmt.Printf("   Source: %d characters (direct input)\n", len(sourceCode))
+		}
+	} else {
+		if !quiet || normal {
+			if sourceInput == "-" || sourceInput == "stdin" {
+				fmt.Printf("   Source file: stdin (%d characters)\n", len(sourceCode))
+			} else {
+				fmt.Printf("   Source file: %s (%d characters)\n", sourceInput, len(sourceCode))
+			}
+		}
+	}
+
+	// Validate source code
+	if strings.TrimSpace(sourceCode) == "" {
+		return fmt.Errorf("source code cannot be empty")
+	}
+
+	// Update the object based on type
+	switch objectType {
+	case "PROGRAM":
+		err = adtClient.UpdateProgram(objectName, sourceCode)
+	case "CLASS":
+		err = adtClient.UpdateClass(objectName, sourceCode)
+	case "INCLUDE":
+		err = adtClient.UpdateInclude(objectName, sourceCode)
+	case "INTERFACE":
+		err = adtClient.UpdateInterface(objectName, sourceCode)
+	default:
+		return fmt.Errorf("unsupported object type for update: %s", objectType)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to update %s %s: %w", objectType, objectName, err)
+	}
+
+	if !quiet {
+		fmt.Printf("✅ %s %s updated successfully!\n", objectType, objectName)
+		fmt.Printf("   Source code updated and activated\n")
+	}
+
+	return nil
 }

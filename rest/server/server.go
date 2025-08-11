@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -44,6 +45,7 @@ func (rs *RestServer) Start(port string) {
 
 	// API endpoints for CLI parity (no AI)
 	http.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
+	http.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
 	http.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
 	http.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
 	http.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
@@ -143,7 +145,7 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		zap.String("type", objectType),
 		zap.String("name", objectName))
 
-	var result interface{}
+	var result any
 	var err error
 
 	switch objectType {
@@ -176,6 +178,111 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		rs.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	rs.sendSuccess(w, result)
+}
+
+// createObjectHandler handles object creation requests (CLI create command equivalent)
+func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+
+	if !rs.adtClient.IsAuthenticated() {
+		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+
+	// Parse creation options from request
+	description := req.Description
+	if description == "" {
+		description = fmt.Sprintf("%s %s", objectType, objectName)
+	}
+
+	sourceCode := req.Source
+	packageName := req.Package
+	if packageName == "" {
+		packageName = "$TMP" // Default to local package
+	}
+
+	rs.logger.Info("Creating object via REST API",
+		zap.String("type", objectType),
+		zap.String("name", objectName),
+		zap.String("package", packageName),
+		zap.Int("source_length", len(sourceCode)))
+
+	var err error
+
+	switch objectType {
+	case "PROGRAM", "PROG":
+		if sourceCode == "" {
+			// Generate basic program template
+			sourceCode = fmt.Sprintf("REPORT %s.\n\nWRITE: 'Hello from %s!'.\n\nSTART-OF-SELECTION.\n  WRITE: / 'Program %s created successfully.'.\n  WRITE: / 'Current date:', sy-datum.\n  WRITE: / 'Current time:', sy-uzeit.\n", objectName, objectName, objectName)
+		}
+		err = rs.adtClient.CreateProgram(objectName, description, sourceCode)
+	case "CLASS", "CLAS":
+		if sourceCode == "" {
+			// Generate basic class template
+			sourceCode = fmt.Sprintf("CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.\n  PUBLIC SECTION.\n    METHODS: say_hello RETURNING VALUE(rv_message) TYPE string.\nENDCLASS.\n\nCLASS %s IMPLEMENTATION.\n  METHOD say_hello.\n    rv_message = 'Hello from %s!'.\n  ENDMETHOD.\nENDCLASS.\n", objectName, objectName, objectName)
+		}
+		err = rs.adtClient.CreateClass(objectName, description, sourceCode)
+	case "INCLUDE", "INCL":
+		if sourceCode == "" {
+			sourceCode = fmt.Sprintf("*&---------------------------------------------------------------------*\n*& Include %s\n*&---------------------------------------------------------------------*\n\n* Include %s created by abaper REST API\n", objectName, objectName)
+		}
+		err = rs.adtClient.CreateInclude(objectName, description, sourceCode)
+	case "INTERFACE", "INTF":
+		if sourceCode == "" {
+			sourceCode = fmt.Sprintf("INTERFACE %s PUBLIC.\n  METHODS: do_something.\nENDINTERFACE.\n", objectName)
+		}
+		err = rs.adtClient.CreateInterface(objectName, description, sourceCode)
+	case "STRUCTURE", "STRU":
+		err = rs.adtClient.CreateStructure(objectName, description, sourceCode)
+	case "TABLE", "TABL":
+		err = rs.adtClient.CreateTable(objectName, description, sourceCode)
+	case "FUNCTIONGROUP", "FUGR":
+		err = rs.adtClient.CreateFunctionGroup(objectName, description, sourceCode)
+	default:
+		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
+		return
+	}
+
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response with creation details
+	result := map[string]interface{}{
+		"object_name": objectName,
+		"object_type": objectType,
+		"description":  description,
+		"package":      packageName,
+		"created":      true,
+		"timestamp":    time.Now().UTC(),
+		"message":      fmt.Sprintf("%s %s created successfully", objectType, objectName),
+	}
+
+	if sourceCode != "" {
+		result["source_inserted"] = true
+		result["source_length"] = len(sourceCode)
+		result["activated"] = true
 	}
 
 	rs.sendSuccess(w, result)

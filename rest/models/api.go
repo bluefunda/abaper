@@ -4,12 +4,15 @@ package models
 
 // APIRequest represents a generic API request
 type APIRequest struct {
-	Action     string            `json:"action"`
-	ObjectType string            `json:"object_type,omitempty"`
-	ObjectName string            `json:"object_name,omitempty"`
-	Args       []string          `json:"args,omitempty"`
-	Prompt     string            `json:"prompt,omitempty"`
-	Config     map[string]string `json:"config,omitempty"`
+	Action      string            `json:"action"`
+	ObjectType  string            `json:"object_type,omitempty"`
+	ObjectName  string            `json:"object_name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	Package     string            `json:"package,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Prompt      string            `json:"prompt,omitempty"`
+	Config      map[string]string `json:"config,omitempty"`
 }
 
 // APIResponse represents a generic API response

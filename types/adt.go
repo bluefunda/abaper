@@ -74,10 +74,10 @@ type ADTTransactionInfo struct {
 }
 
 type ADTTableData struct {
-	TableName string                   `json:"table_name"`
-	RowCount  int                      `json:"row_count"`
-	Columns   []ADTTableColumn         `json:"columns"`
-	Rows      []map[string]interface{} `json:"rows"`
+	TableName string           `json:"table_name"`
+	RowCount  int              `json:"row_count"`
+	Columns   []ADTTableColumn `json:"columns"`
+	Rows      []map[string]any `json:"rows"`
 }
 
 type ADTTableColumn struct {
@@ -132,4 +132,18 @@ type ADTClient interface {
 	GetTableContents(tableName string, maxRows int) (*ADTTableData, error)
 	GetTransports() ([]ADTTransport, error)
 	CreateProgram(name, description, source string) error
+	CreateInclude(name, description, source string) error
+	CreateClass(name, description, source string) error
+	CreateInterface(name, description, source string) error
+	CreateStructure(name, description, source string) error
+	CreateTable(name, description, source string) error
+	CreateFunctionGroup(name, description, source string) error
+	// Update operations
+	UpdateProgram(name, source string) error
+	UpdateClass(name, source string) error
+	UpdateInclude(name, source string) error
+	UpdateInterface(name, source string) error
+	// Object existence checking
+	CheckObjectExists(objectType, objectName string) (bool, error)
+	GetObjectSource(objectType, objectName string) (string, error)
 }
