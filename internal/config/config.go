@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultBaseURL = "https://api.bluefunda.com"
-	DefaultRealm   = "trm"
+	DefaultRealm   = "individual"
 	ClientID       = "cai-cli"
 	ConfigDir      = ".abaper"
 	ConfigFile     = "config"

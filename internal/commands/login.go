@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"time"
@@ -28,6 +29,7 @@ var logoutCmd = &cobra.Command{
 			return fmt.Errorf("logout: %w", err)
 		}
 		fmt.Println("Logged out successfully.")
+		go client.Track("logout", nil)
 		return nil
 	},
 }
@@ -36,6 +38,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	cfg := config.Load()
 	realm := cfg.Realm
 
+	go client.Track("login_started", nil)
+
 	// Step 1: Request device code
 	fmt.Println("Requesting device authorization...")
 	deviceResp, err := client.RequestDeviceCode(realm)
@@ -43,16 +47,18 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("login failed: %w", err)
 	}
 
-	// Step 2: Open browser
+	// Step 2: Open browser via bluefunda.com/login
 	verifyURL := deviceResp.VerificationURIComplete
 	if verifyURL == "" {
 		verifyURL = deviceResp.VerificationURI
 	}
+	loginURL := fmt.Sprintf("https://bluefunda.com/login?redirect_uri=%s&utm_source=cli&utm_medium=command&utm_campaign=login",
+		url.QueryEscape(verifyURL))
 
-	fmt.Printf("\nOpen this URL in your browser to log in:\n  %s\n\n", verifyURL)
+	fmt.Printf("\nOpen this URL in your browser to log in:\n  %s\n\n", loginURL)
 	fmt.Printf("Your code: %s\n\n", deviceResp.UserCode)
 
-	_ = openBrowser(verifyURL)
+	_ = openBrowser(loginURL)
 
 	// Step 3: Poll for token
 	fmt.Println("Waiting for authorization...")
@@ -73,6 +79,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Successfully logged in!")
+	go client.Track("login_completed", map[string]string{"success": "true"})
 	return nil
 }
 

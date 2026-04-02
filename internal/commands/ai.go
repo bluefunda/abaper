@@ -54,6 +54,8 @@ func runAIChat(cmd *cobra.Command, args []string) error {
 		chatID = uuid.New().String()
 	}
 
+	go client.Track("chat_opened", nil)
+
 	c, err := client.NewClient()
 	if err != nil {
 		return err
