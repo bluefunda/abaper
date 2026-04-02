@@ -33,7 +33,7 @@ type AuthErrorResponse struct {
 }
 
 func authBaseURL(realm string) string {
-	return fmt.Sprintf("https://auth.bluefunda.com/realms/%s/protocol/openid-connect", realm)
+	return fmt.Sprintf("https://ai.bluefunda.com/realms/%s/protocol/openid-connect", realm)
 }
 
 func RequestDeviceCode(realm string) (*DeviceAuthResponse, error) {

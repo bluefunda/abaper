@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"github.com/bluefunda/abaper-cli/internal/client"
 	"github.com/bluefunda/abaper-cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -15,6 +16,9 @@ It communicates with ABAPer APIs exposed through the ABAPer gateway
 to support developer workflows including code generation, compilation,
 deployment, and inspection.`,
 	SilenceUsage: true,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		go client.Track("cli_invoked", map[string]string{"command": cmd.Name()})
+	},
 }
 
 func init() {
@@ -26,6 +30,7 @@ func init() {
 
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
+	rootCmd.AddCommand(signupCmd)
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(statusCmd)
