@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/bluefunda/abaper-cli/compare/v1.2.1...v1.3.0) (2026-04-02)
+
+
+### Features
+
+* add telemetry, signup command, route login through bluefunda.com ([#14](https://github.com/bluefunda/abaper-cli/issues/14)) ([3fe4c64](https://github.com/bluefunda/abaper-cli/commit/3fe4c646c3ec4ecb2f396669a4801f29e8883274))
+
 ## [1.2.1](https://github.com/bluefunda/abaper-cli/compare/v1.2.0...v1.2.1) (2026-03-13)
 
 
