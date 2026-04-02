@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/bluefunda/abaper-cli/compare/v1.3.0...v1.3.1) (2026-04-02)
+
+
+### Bug Fixes
+
+* revert auth host to auth.bluefunda.com ([#16](https://github.com/bluefunda/abaper-cli/issues/16)) ([b64205e](https://github.com/bluefunda/abaper-cli/commit/b64205e5b8965a1d527a330f2670ed460f835a76))
+
 ## [1.3.0](https://github.com/bluefunda/abaper-cli/compare/v1.2.1...v1.3.0) (2026-04-02)
 
 
