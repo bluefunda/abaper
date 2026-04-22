@@ -34,7 +34,7 @@ jobs:
           build-args: |
             VERSION=${{ inputs.tag }}
           tags: |
-            bluefunda/abaper:${{ inputs.tag }}
-            bluefunda/abaper:latest
+            bluefunda/abaper-cli:${{ inputs.tag }}
+            bluefunda/abaper-cli:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
