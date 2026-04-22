@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/bluefunda/abaper-cli/compare/v1.3.1...v1.4.0) (2026-04-22)
+
+
+### Features
+
+* add install.sh for one-line installation ([#20](https://github.com/bluefunda/abaper-cli/issues/20)) ([dbd853e](https://github.com/bluefunda/abaper-cli/commit/dbd853ebc8d58865090a47a3363ff394e53ed5b9))
+
 ## [1.3.1](https://github.com/bluefunda/abaper-cli/compare/v1.3.0...v1.3.1) (2026-04-02)
 
 
