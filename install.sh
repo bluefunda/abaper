@@ -43,7 +43,7 @@ fi
 # Check dependencies
 for cmd in curl sha256sum; do
   command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is required but not installed"
-fi
+done
 
 # Fetch latest version
 info "Fetching latest release..."
