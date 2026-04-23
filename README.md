@@ -1,14 +1,27 @@
 # ABAPer CLI
 
-Command line interface for the [ABAPer](https://abaper.bluefunda.com) platform. Communicates with ABAPer APIs exposed through the ABAPer gateway (`abaper-gw`).
+Command line interface for the [ABAPer](https://abaper.bluefunda.com) platform — generate, deploy, and test ABAP objects directly from your terminal.
+
+## Installation
+
+### One-line installer (macOS and Linux)
+
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/abaper-cli/main/install.sh)"
+```
+
+Installs to `/usr/local/bin` if writable, otherwise `~/.local/bin`. Override with `ABAPER_INSTALL_DIR`.
+
+### Homebrew (macOS)
+
+```bash
+brew tap bluefunda/tap
+brew install abaper
+```
 
 ## Quick Start
 
 ```bash
-# Install (macOS)
-brew tap bluefunda/tap
-brew install abaper
-
 # Authenticate
 abaper login
 
@@ -19,17 +32,6 @@ abaper status
 abaper generate --type program --name ZMY_REPORT
 abaper deploy --type program --name ZMY_REPORT --source-file report.abap
 ```
-
-## Installation
-
-### Homebrew (macOS)
-
-```bash
-brew tap bluefunda/tap
-brew install abaper
-```
-
-This installs the binary and the man page automatically.
 
 ### From GitHub Releases
 
@@ -59,8 +61,8 @@ go install github.com/bluefunda/abaper-cli/cmd/abaper@latest
 ### Docker
 
 ```bash
-docker pull bluefunda/abaper
-docker run --rm bluefunda/abaper version
+docker pull bluefunda/abaper-cli
+docker run --rm bluefunda/abaper-cli version
 ```
 
 ## Commands
@@ -281,21 +283,21 @@ Tokens are **automatically refreshed** when expired. The CLI uses the `cai-cli` 
 
 ## Docker Usage
 
-The CLI is available as a Docker image on Docker Hub under [`bluefunda/abaper`](https://hub.docker.com/r/bluefunda/abaper).
+The CLI is available as a Docker image on Docker Hub under [`bluefunda/abaper-cli`](https://hub.docker.com/r/bluefunda/abaper-cli).
 
 ```bash
 # Pull the latest image
-docker pull bluefunda/abaper:latest
+docker pull bluefunda/abaper-cli:latest
 
 # Pull a specific version
-docker pull bluefunda/abaper:v1.0.0
+docker pull bluefunda/abaper-cli:v1.0.0
 
 # Run a command
-docker run --rm bluefunda/abaper version
-docker run --rm bluefunda/abaper status -o json
+docker run --rm bluefunda/abaper-cli version
+docker run --rm bluefunda/abaper-cli status -o json
 
 # Mount config for authenticated commands
-docker run --rm -v ~/.abaper:/root/.abaper bluefunda/abaper status
+docker run --rm -v ~/.abaper:/root/.abaper bluefunda/abaper-cli status
 ```
 
 ## Developer Setup
@@ -340,4 +342,4 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 3. Merging the Release PR triggers:
    - GoReleaser builds multi-platform binaries (named `abaper_<version>_<os>_<arch>`)
    - Binaries attached to GitHub Release
-   - Docker image pushed to [`bluefunda/abaper`](https://hub.docker.com/r/bluefunda/abaper)
+   - Docker image pushed to [`bluefunda/abaper-cli`](https://hub.docker.com/r/bluefunda/abaper-cli)
