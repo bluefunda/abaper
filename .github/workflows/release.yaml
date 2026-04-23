@@ -86,10 +86,10 @@ jobs:
           build-args: |
             VERSION=${{ needs.release-please.outputs.tag_name }}
           tags: |
-            bluefunda/abaper:${{ needs.release-please.outputs.tag_name }}
-            bluefunda/abaper:latest
-            ghcr.io/bluefunda/abaper:${{ needs.release-please.outputs.tag_name }}
-            ghcr.io/bluefunda/abaper:latest
+            bluefunda/abaper-cli:${{ needs.release-please.outputs.tag_name }}
+            bluefunda/abaper-cli:latest
+            ghcr.io/bluefunda/abaper-cli:${{ needs.release-please.outputs.tag_name }}
+            ghcr.io/bluefunda/abaper-cli:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -105,6 +105,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: bluefunda/abaper
+          repository: bluefunda/abaper-cli
           readme-filepath: ./README.md
           short-description: "ABAPer CLI — command line interface for the ABAPer platform"
