@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/bluefunda/abaper-cli/compare/v1.4.0...v1.4.1) (2026-04-23)
+
+
+### Bug Fixes
+
+* correct docker image name from abaper to abaper-cli ([#22](https://github.com/bluefunda/abaper-cli/issues/22)) ([161c1e0](https://github.com/bluefunda/abaper-cli/commit/161c1e05e436b4524e89985e94a09becade4a242))
+
 ## [1.4.0](https://github.com/bluefunda/abaper-cli/compare/v1.3.1...v1.4.0) (2026-04-22)
 
 
