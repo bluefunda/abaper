@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/bluefunda/abaper-cli/compare/v1.4.1...v1.4.2) (2026-04-23)
+
+
+### Bug Fixes
+
+* replace fi with done in install.sh dependency check loop ([d2a3d2e](https://github.com/bluefunda/abaper-cli/commit/d2a3d2ef446646bbfd8ff8450efd0a72ca48f9df))
+
 ## [1.4.1](https://github.com/bluefunda/abaper-cli/compare/v1.4.0...v1.4.1) (2026-04-23)
 
 
