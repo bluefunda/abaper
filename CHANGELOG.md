@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.4](https://github.com/bluefunda/abaper-cli/compare/v1.4.3...v1.4.4) (2026-04-24)
+
+
+### Bug Fixes
+
+* use DOCKER_USERNAME/DOCKER_PASSWORD org secrets, add continue-on-error to description step ([c10ddcb](https://github.com/bluefunda/abaper-cli/commit/c10ddcbbe1e7a3be1ad9967867f8030105a49356))
+
 ## [1.4.3](https://github.com/bluefunda/abaper-cli/compare/v1.4.2...v1.4.3) (2026-04-24)
 
 
