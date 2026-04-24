@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/bluefunda/abaper-cli/compare/v1.4.2...v1.4.3) (2026-04-24)
+
+
+### Bug Fixes
+
+* fold dockerhub-readme into docker job to fix 403 on description update ([e8f5513](https://github.com/bluefunda/abaper-cli/commit/e8f55137963f2990d08a5461325058604f3adb8e))
+
 ## [1.4.2](https://github.com/bluefunda/abaper-cli/compare/v1.4.1...v1.4.2) (2026-04-23)
 
 
