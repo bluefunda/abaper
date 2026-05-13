@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/bluefunda/abaper-cli/compare/v1.4.4...v1.5.0) (2026-05-13)
+
+
+### Features
+
+* add macOS notarized brew cask installer ([abaa043](https://github.com/bluefunda/abaper-cli/commit/abaa04326c7d6e70ab08c5319e3427a160dceb04))
+
 ## [1.4.4](https://github.com/bluefunda/abaper-cli/compare/v1.4.3...v1.4.4) (2026-04-24)
 
 
