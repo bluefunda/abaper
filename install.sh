@@ -41,7 +41,9 @@ else
 fi
 
 # Check dependencies
-for cmd in curl sha256sum; do
+REQUIRED_CMDS="curl sha256sum"
+[ "$OS" = "darwin" ] && REQUIRED_CMDS="curl shasum unzip"
+for cmd in $REQUIRED_CMDS; do
   command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is required but not installed"
 done
 
@@ -51,7 +53,12 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
   | grep '"tag_name"' | sed 's/.*"tag_name": *"v\([^"]*\)".*/\1/')
 [ -n "$VERSION" ] || die "Could not determine latest version"
 
-ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
+# darwin uses zip, linux uses tar.gz
+if [ "$OS" = "darwin" ]; then
+  ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.zip"
+else
+  ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.tar.gz"
+fi
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 
 info "Installing ${BOLD}${BINARY}${RESET} v${VERSION} (${OS}/${ARCH})..."
@@ -65,11 +72,19 @@ curl -fsSL "${BASE_URL}/checksums.txt"  -o "${TMPDIR}/checksums.txt"
 
 # Verify checksum
 cd "$TMPDIR"
-grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+if [ "$OS" = "darwin" ]; then
+  grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
+else
+  grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+fi
 ok "Checksum verified"
 
 # Extract and install
-tar -xzf "$ARCHIVE" "$BINARY"
+if [ "$OS" = "darwin" ]; then
+  unzip -q "$ARCHIVE" "$BINARY"
+else
+  tar -xzf "$ARCHIVE" "$BINARY"
+fi
 
 if [ "$INSTALL_DIR" = "/usr/local/bin" ] && [ ! -w "/usr/local/bin" ]; then
   sudo install -m 755 "$BINARY" "${INSTALL_DIR}/${BINARY}"

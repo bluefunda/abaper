@@ -16,7 +16,24 @@ Installs to `/usr/local/bin` if writable, otherwise `~/.local/bin`. Override wit
 
 ```bash
 brew tap bluefunda/tap
-brew install abaper
+brew install --cask abaper
+```
+
+### Debian / Ubuntu
+
+```bash
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -sL "https://github.com/bluefunda/abaper-cli/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.deb" -o abaper.deb
+sudo dpkg -i abaper.deb
+```
+
+### RHEL / Fedora / Rocky
+
+```bash
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+sudo dnf install "https://github.com/bluefunda/abaper-cli/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.rpm"
 ```
 
 ## Quick Start
