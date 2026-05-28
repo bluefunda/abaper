@@ -45,6 +45,7 @@ jobs:
     with:
       tag: ${{ needs.release.outputs.tag_name }}
       build-args: VERSION=${{ needs.release.outputs.tag_name }}
+      runner: ubuntu-latest
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
 
