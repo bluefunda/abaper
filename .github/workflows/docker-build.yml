@@ -11,6 +11,9 @@ on:
 
 jobs:
   deploy:
+    permissions:
+      contents: read
+      packages: write
     uses: bluefunda/release-foundry/.github/workflows/docker-deploy.yml@main
     with:
       tag: ${{ inputs.tag || 'latest' }}
