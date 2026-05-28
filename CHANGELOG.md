@@ -2,6 +2,18 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [2.0.0](https://github.com/bluefunda/abaper/compare/v1.5.0...v2.0.0) (2026-05-28)
+
+### Features
+
+* merge CLI and Go SDK into unified `github.com/bluefunda/abaper` module
+* add LSP server (`lsp/`), ADT client (`internal/adt/`), REST server (`rest/`), shared types (`types/`)
+* standardize Apache 2.0 licensing
+
+### ⚠ BREAKING CHANGES
+
+* module path changed from `github.com/bluefunda/abaper-cli` to `github.com/bluefunda/abaper`
+
 ## [1.5.0](https://github.com/bluefunda/abaper-cli/compare/v1.4.4...v1.5.0) (2026-05-13)
 
 

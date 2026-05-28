@@ -114,11 +114,11 @@ release:
     name: abaper
   draft: false
   replace_existing_draft: true
-  name_template: "ABAPer CLI v{{ .Version }}"
+  name_template: "ABAPer v{{ .Version }}"
   header: |
-    ## ABAPer CLI v{{ .Version }}
+    ## ABAPer v{{ .Version }}
 
-    Cross-platform CLI for the ABAPer platform.
+    CLI and Go SDK for the ABAPer platform.
 
     ### Installation
 
