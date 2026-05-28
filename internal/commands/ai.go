@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/bluefunda/abaper-cli/internal/client"
-	"github.com/bluefunda/abaper-cli/pkg/output"
+	"github.com/bluefunda/abaper/internal/client"
+	"github.com/bluefunda/abaper/pkg/output"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 )

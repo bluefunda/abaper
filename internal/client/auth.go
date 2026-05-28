@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluefunda/abaper-cli/internal/config"
+	"github.com/bluefunda/abaper/internal/config"
 )
 
 type DeviceAuthResponse struct {

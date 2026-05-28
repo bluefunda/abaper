@@ -1,13 +1,17 @@
 # ABAPer CLI
 
-Command line interface for the [ABAPer](https://abaper.bluefunda.com) platform — generate, deploy, and test ABAP objects directly from your terminal.
+[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/bluefunda/abaper)](https://goreportcard.com/report/github.com/bluefunda/abaper)
+[![pkg.go.dev](https://pkg.go.dev/badge/github.com/bluefunda/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/abaper)
+
+Command line interface and Go SDK for the [ABAPer](https://abaper.bluefunda.com) platform — generate, deploy, and test ABAP objects directly from your terminal, and a reusable Go library for SAP ABAP development tooling.
 
 ## Installation
 
 ### One-line installer (macOS and Linux)
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/abaper-cli/main/install.sh)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/abaper/main/install.sh)"
 ```
 
 Installs to `/usr/local/bin` if writable, otherwise `~/.local/bin`. Override with `ABAPER_INSTALL_DIR`.
@@ -22,19 +26,45 @@ brew install --cask abaper
 ### Debian / Ubuntu
 
 ```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-curl -sL "https://github.com/bluefunda/abaper-cli/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.deb" -o abaper.deb
+curl -sL "https://github.com/bluefunda/abaper/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.deb" -o abaper.deb
 sudo dpkg -i abaper.deb
 ```
 
 ### RHEL / Fedora / Rocky
 
 ```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-sudo dnf install "https://github.com/bluefunda/abaper-cli/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.rpm"
+sudo dnf install "https://github.com/bluefunda/abaper/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.rpm"
 ```
+
+### From Source
+
+```bash
+go install github.com/bluefunda/abaper/cmd/abaper@latest
+```
+
+### Docker
+
+```bash
+docker pull ghcr.io/bluefunda/abaper
+docker run --rm ghcr.io/bluefunda/abaper version
+```
+
+### From GitHub Releases
+
+Download the binary for your platform from the [releases page](https://github.com/bluefunda/abaper/releases).
+
+| Platform       | Archive                              |
+|----------------|--------------------------------------|
+| macOS (ARM64)  | `abaper_<version>_darwin_arm64.zip`  |
+| macOS (AMD64)  | `abaper_<version>_darwin_amd64.zip`  |
+| Linux (AMD64)  | `abaper_<version>_linux_amd64.tar.gz` |
+| Linux (ARM64)  | `abaper_<version>_linux_arm64.tar.gz` |
+| Windows (AMD64)| `abaper_<version>_windows_amd64.zip`  |
+| Windows (ARM64)| `abaper_<version>_windows_arm64.zip`  |
 
 ## Quick Start
 
@@ -50,39 +80,7 @@ abaper generate --type program --name ZMY_REPORT
 abaper deploy --type program --name ZMY_REPORT --source-file report.abap
 ```
 
-### From GitHub Releases
-
-Download the binary for your platform from the [releases page](https://github.com/bluefunda/abaper-cli/releases).
-
-| Platform       | Archive                              |
-|----------------|--------------------------------------|
-| macOS (ARM64)  | `abaper_<version>_darwin_arm64.tar.gz` |
-| macOS (AMD64)  | `abaper_<version>_darwin_amd64.tar.gz` |
-| Linux (AMD64)  | `abaper_<version>_linux_amd64.tar.gz`  |
-| Linux (ARM64)  | `abaper_<version>_linux_arm64.tar.gz`  |
-| Windows (AMD64)| `abaper_<version>_windows_amd64.zip`   |
-| Windows (ARM64)| `abaper_<version>_windows_arm64.zip`   |
-
-```bash
-# macOS / Linux
-curl -L https://github.com/bluefunda/abaper-cli/releases/latest/download/abaper_<version>_<os>_<arch>.tar.gz | tar xz
-sudo mv abaper /usr/local/bin/
-```
-
-### From Source
-
-```bash
-go install github.com/bluefunda/abaper-cli/cmd/abaper@latest
-```
-
-### Docker
-
-```bash
-docker pull bluefunda/abaper-cli
-docker run --rm bluefunda/abaper-cli version
-```
-
-## Commands
+## CLI Commands
 
 ### `abaper login`
 
@@ -134,7 +132,7 @@ abaper generate --type interface --name ZIF_MY_INTERFACE
 
 ### `abaper deploy`
 
-Upload source code and activate an ABAP object in a single step. Performs a save followed by activation, matching the workflow in ABAPer Editor.
+Upload source code and activate an ABAP object in a single step.
 
 ```bash
 abaper deploy --type program --name ZMY_PROGRAM --source-file program.abap
@@ -157,13 +155,6 @@ abaper test --type class --name ZCL_MY_CLASS
 abaper test --type class --name ZCL_MY_CLASS -o json
 ```
 
-**Flags:**
-
-| Flag     | Required | Default | Description                  |
-|----------|----------|---------|------------------------------|
-| `--name` | Yes      | —       | Object name                  |
-| `--type` | No       | `class` | Object type: class, program  |
-
 ### `abaper list objects`
 
 List ABAP objects, optionally filtered by package or type.
@@ -172,13 +163,6 @@ List ABAP objects, optionally filtered by package or type.
 abaper list objects --package ZDEV
 abaper list objects --type program
 ```
-
-**Flags:**
-
-| Flag        | Required | Default | Description               |
-|-------------|----------|---------|---------------------------|
-| `--package` | No       | —       | Filter by package name    |
-| `--type`    | No       | —       | Filter by object type     |
 
 ### `abaper list packages`
 
@@ -190,29 +174,13 @@ abaper list packages --name ZDEV
 
 ### `abaper ai chat`
 
-Send a prompt to the ABAPer AI assistant and stream the response. Supports including ABAP source files as context and resuming existing chat sessions.
+Send a prompt to the ABAPer AI assistant and stream the response.
 
 ```bash
-# Ask a question
 abaper ai chat "Explain SELECT FOR ALL ENTRIES in ABAP"
-
-# Include source context
 abaper ai chat "Optimize this code" --context-file program.abap
-
-# Resume a previous chat
 abaper ai chat "What about performance?" --chat-id <previous-chat-id>
-
-# JSON output for scripting
-abaper ai chat "Review this code" --context-file report.abap -o json
 ```
-
-**Flags:**
-
-| Flag              | Required | Default | Description                          |
-|-------------------|----------|---------|--------------------------------------|
-| `--model`         | No       | `groq`  | LLM model to use                     |
-| `--context-file`  | No       | —       | ABAP source file to include as context |
-| `--chat-id`       | No       | —       | Resume an existing chat session      |
 
 ### `abaper version`
 
@@ -222,38 +190,13 @@ Print the CLI version.
 abaper version
 ```
 
-## Man Page
-
-A Unix man page is included. After installing the binary from a release archive:
-
-```bash
-# Install the man page (included in release archives)
-sudo install -m 644 man/abaper.1 /usr/local/share/man/man1/abaper.1
-
-# Or using make
-sudo make install-man
-
-# Then use it like any other Unix command
-man abaper
-```
-
 ## Global Flags
-
-These flags are available on all commands:
 
 | Flag              | Description                                        |
 |-------------------|----------------------------------------------------|
 | `--base-url`      | ABAPer API base URL (default: `https://api.bluefunda.com`) |
 | `--realm`         | Keycloak realm (default: `trm`)                    |
 | `-o`, `--output`  | Output format: `text`, `json` (default: `text`)    |
-
-## Output Formats
-
-All commands support `--output json` for machine-readable output, useful for scripting and CI/CD pipelines:
-
-```bash
-abaper status -o json | jq '.authenticated'
-```
 
 ## Configuration
 
@@ -280,48 +223,71 @@ org: default
 | `ABAPER_REALM`    | Override the Keycloak realm|
 | `ABAPER_ORG`      | Override the organization  |
 
-### Files
-
-| Path                      | Description                           |
-|---------------------------|---------------------------------------|
-| `~/.abaper/config.yaml`   | Configuration file                   |
-| `~/.abaper/tokens.yaml`   | OAuth2 tokens (permissions: 0600)    |
-
 ## Authentication
 
-ABAPer CLI uses the **OAuth2 device authorization flow** via Keycloak (same flow as ABAPer VS Code extension):
+ABAPer CLI uses the **OAuth2 device authorization flow** via Keycloak:
 
 1. `abaper login` requests a device code from the authorization server
 2. Your browser opens to the verification URL
 3. The CLI polls for authorization completion
 4. Access and refresh tokens are stored locally
 
-Tokens are **automatically refreshed** when expired. The CLI uses the `cai-cli` OAuth2 client ID.
+Tokens are **automatically refreshed** when expired.
+
+## SDK Usage
+
+This repo also exports a reusable Go SDK for SAP ABAP development tooling.
+
+### ADT Client (direct SAP connection)
+
+```go
+import (
+    "github.com/bluefunda/abaper/types"
+    "github.com/bluefunda/abaper/internal/adt"
+)
+
+cfg := types.ADTConfig{
+    Host:     "my-sap.example.com",
+    Client:   "100",
+    Username: "user",
+    Password: "pass",
+}
+client := adt.NewADTClient(cfg)
+src, err := client.GetProgram("ZMY_PROGRAM")
+```
+
+### LSP Server
+
+```go
+import "github.com/bluefunda/abaper/lsp"
+
+srv := lsp.NewServer(lsp.Config{
+    ActivateOnSave: true,
+})
+srv.RunStdio()
+```
+
+## Man Page
+
+A Unix man page is included with release archives.
+
+```bash
+sudo make install-man
+man abaper
+```
 
 ## Docker Usage
 
-The CLI is available as a Docker image on Docker Hub under [`bluefunda/abaper-cli`](https://hub.docker.com/r/bluefunda/abaper-cli).
-
 ```bash
-# Pull the latest image
-docker pull bluefunda/abaper-cli:latest
-
-# Pull a specific version
-docker pull bluefunda/abaper-cli:v1.0.0
-
-# Run a command
-docker run --rm bluefunda/abaper-cli version
-docker run --rm bluefunda/abaper-cli status -o json
-
-# Mount config for authenticated commands
-docker run --rm -v ~/.abaper:/root/.abaper bluefunda/abaper-cli status
+docker pull ghcr.io/bluefunda/abaper:latest
+docker run --rm -v ~/.abaper:/root/.abaper ghcr.io/bluefunda/abaper status
 ```
 
 ## Developer Setup
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.25.1+
 - golangci-lint (for linting)
 
 ### Build
@@ -343,12 +309,24 @@ make docker-run     # Run CLI in container
 
 ## Architecture
 
-The CLI follows the same API patterns as [ABAPer Editor](https://github.com/bluefunda/abaper-editor) and [ABAPer VS Code](https://github.com/bluefunda/abaper-vscode):
+```
+cmd/abaper/         # CLI entry point
+internal/
+  commands/         # Cobra command definitions
+  client/           # ABAPer gateway HTTP client + OAuth2
+  config/           # Viper-based config management
+  adt/              # ADT HTTP client (direct SAP)
+  lsp/              # LSP server internals
+types/              # Shared ADT types and interfaces
+lsp/                # Public LSP server wrapper
+rest/               # REST API server
+lib/                # Library wrapper for embedding
+pkg/output/         # Output formatting utilities
+```
 
 - **Authentication**: OAuth2 device authorization flow via Keycloak
 - **API Client**: Calls ABAPer APIs through the KrakenD gateway (`abaper-gw`) at `/abaper/api/v1/*`
-- **Request Headers**: `Authorization: Bearer <token>`, `X-Realm`, `X-SAP-*` headers
-- **Response Format**: `{ "success": bool, "data": T, "error": string }`
+- **SDK**: Types and ADT client for direct SAP ADT REST API usage
 
 ## Release Process
 
@@ -359,4 +337,10 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 3. Merging the Release PR triggers:
    - GoReleaser builds multi-platform binaries (named `abaper_<version>_<os>_<arch>`)
    - Binaries attached to GitHub Release
-   - Docker image pushed to [`bluefunda/abaper-cli`](https://hub.docker.com/r/bluefunda/abaper-cli)
+   - Docker image pushed to `ghcr.io/bluefunda/abaper`
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+Copyright 2025 BlueFunda, Inc.

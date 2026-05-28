@@ -3,7 +3,7 @@ package commands
 import (
 	"fmt"
 
-	"github.com/bluefunda/abaper-cli/internal/client"
+	"github.com/bluefunda/abaper/internal/client"
 	"github.com/spf13/cobra"
 )
 

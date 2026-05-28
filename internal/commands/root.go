@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"github.com/bluefunda/abaper-cli/internal/client"
-	"github.com/bluefunda/abaper-cli/internal/config"
+	"github.com/bluefunda/abaper/internal/client"
+	"github.com/bluefunda/abaper/internal/config"
 	"github.com/spf13/cobra"
 )
 

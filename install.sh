@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="bluefunda/abaper-cli"
+REPO="bluefunda/abaper"
 BINARY="abaper"
 INSTALL_DIR=""
 

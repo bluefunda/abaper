@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/bluefunda/abaper-cli/internal/commands"
+	"github.com/bluefunda/abaper/internal/commands"
 )
 
 func main() {

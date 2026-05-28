@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluefunda/abaper-cli/internal/config"
+	"github.com/bluefunda/abaper/internal/config"
 )
 
 // APIResponse is the standard response envelope from ABAPer APIs.

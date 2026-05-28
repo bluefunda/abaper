@@ -1,6 +1,6 @@
 BINARY_NAME=abaper
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS=-ldflags "-X github.com/bluefunda/abaper-cli/internal/commands.version=$(VERSION)"
+LDFLAGS=-ldflags "-X github.com/bluefunda/abaper/internal/commands.version=$(VERSION)"
 PLATFORMS=linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
 MANDIR ?= /usr/local/share/man/man1

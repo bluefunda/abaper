@@ -9,7 +9,7 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "Building $BINARY version $VERSION..."
 go build \
-  -ldflags "-X github.com/bluefunda/abaper-cli/internal/commands.version=$VERSION" \
+  -ldflags "-X github.com/bluefunda/abaper/internal/commands.version=$VERSION" \
   -o "$OUTPUT_DIR/$BINARY" \
   ./cmd/abaper
 
