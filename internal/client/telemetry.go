@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/bluefunda/abaper-cli/internal/config"
+	"github.com/bluefunda/abaper/internal/config"
 )
 
 type telemetryEvent struct {
