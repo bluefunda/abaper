@@ -2,6 +2,14 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.5.1](https://github.com/bluefunda/abaper/compare/v1.5.0...v1.5.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* add packages:write permission to docker-build workflow ([#34](https://github.com/bluefunda/abaper/issues/34)) ([b15562e](https://github.com/bluefunda/abaper/commit/b15562e37fdf02ae1ba3a8360c9ec0bf3ae737a1))
+* remove private module setup from Dockerfile ([#37](https://github.com/bluefunda/abaper/issues/37)) ([2e91117](https://github.com/bluefunda/abaper/commit/2e91117af8b2b51db8d86313c0d1008ceda1a65d))
+
 ## [2.0.0](https://github.com/bluefunda/abaper/compare/v1.5.0...v2.0.0) (2026-05-28)
 
 ### Features
