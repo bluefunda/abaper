@@ -2,8 +2,8 @@ package types
 
 // SyntaxCheckResult holds the result of a syntax check operation
 type SyntaxCheckResult struct {
-	ObjectName string              `json:"object_name"`
-	ObjectType string              `json:"object_type"`
+	ObjectName string               `json:"object_name"`
+	ObjectType string               `json:"object_type"`
 	Messages   []SyntaxCheckMessage `json:"messages"`
 }
 

@@ -2918,11 +2918,11 @@ func (c *ADTClientImpl) ActivateObject(objectType, objectName string) (*types.Ac
 
 // Unit test XML request/response structures
 type unitTestRunConfig struct {
-	XMLName    xml.Name              `xml:"aunit:runConfiguration"`
-	AunitNS    string                `xml:"xmlns:aunit,attr"`
-	External   unitTestExternal      `xml:"aunit:external"`
-	Options    unitTestOptions       `xml:"aunit:options"`
-	ObjectSets unitTestObjectSets    `xml:"aunit:objectSets"`
+	XMLName    xml.Name           `xml:"aunit:runConfiguration"`
+	AunitNS    string             `xml:"xmlns:aunit,attr"`
+	External   unitTestExternal   `xml:"aunit:external"`
+	Options    unitTestOptions    `xml:"aunit:options"`
+	ObjectSets unitTestObjectSets `xml:"aunit:objectSets"`
 }
 
 type unitTestExternal struct {
@@ -2946,13 +2946,13 @@ type unitTestObjectSets struct {
 }
 
 type unitTestObjectSet struct {
-	Kind       string              `xml:"kind,attr"`
-	ObjectRefs unitTestObjectRefs  `xml:"adtcore:objectReferences"`
+	Kind       string             `xml:"kind,attr"`
+	ObjectRefs unitTestObjectRefs `xml:"adtcore:objectReferences"`
 }
 
 type unitTestObjectRefs struct {
-	AdtcoreNS string             `xml:"xmlns:adtcore,attr"`
-	Refs      []unitTestObjRef   `xml:"adtcore:objectReference"`
+	AdtcoreNS string           `xml:"xmlns:adtcore,attr"`
+	Refs      []unitTestObjRef `xml:"adtcore:objectReference"`
 }
 
 type unitTestObjRef struct {
@@ -2978,16 +2978,16 @@ type unitTestTestClass struct {
 }
 
 type unitTestTestMethod struct {
-	Name   string           `xml:"name,attr"`
-	URI    string           `xml:"uri,attr"`
-	Alerts []unitTestAlert  `xml:"alerts>alert"`
+	Name   string          `xml:"name,attr"`
+	URI    string          `xml:"uri,attr"`
+	Alerts []unitTestAlert `xml:"alerts>alert"`
 }
 
 type unitTestAlert struct {
-	Kind    string `xml:"kind,attr"`
-	Severity string `xml:"severity,attr"`
-	Title   string `xml:"title"`
-	Details []unitTestAlertDetail `xml:"details>detail"`
+	Kind     string                `xml:"kind,attr"`
+	Severity string                `xml:"severity,attr"`
+	Title    string                `xml:"title"`
+	Details  []unitTestAlertDetail `xml:"details>detail"`
 }
 
 type unitTestAlertDetail struct {
