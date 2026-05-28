@@ -38,7 +38,7 @@ The platform has two backend services that handle ADT operations:
 | **Language** | Go | TypeScript (Express) |
 | **ADT Library** | Custom Go implementation | `abap-adt-api` (npm) |
 | **Primary role** | CLI tool + GitHub REST API | ADT proxy REST API |
-| **Deployment** | Docker `bluefunda/abaper:latest` on apps node | Docker `bdadevops/abaper-ts:latest` on apps node |
+| **Deployment** | Docker `ghcr.io/bluefunda/abaper:latest` on apps node | Docker `bdadevops/abaper-ts:latest` on apps node |
 | **Port** | 8085 | 8087 |
 | **Used by** | CLI users, abaper-editor (GitHub features) | abaper-editor (all ADT ops), abaper-mcp |
 
@@ -77,7 +77,7 @@ abaper-editor (browser)
 
 ```yaml
 # apps node containers
-abaper:      bluefunda/abaper:latest     # Port 8085
+abaper:      ghcr.io/bluefunda/abaper:latest  # Port 8085
 abaper-ts:   bdadevops/abaper-ts:latest  # Port 8087
 abaper-mcp:  bdadevops/abaper-mcp:latest # Port 8015
 ```

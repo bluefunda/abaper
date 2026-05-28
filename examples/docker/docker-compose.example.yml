@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   abaper:
-    image: bluefunda/abaper:latest # Use published image, not build
+    image: ghcr.io/bluefunda/abaper:latest
     container_name: abaper-server
     restart: unless-stopped
     ports:

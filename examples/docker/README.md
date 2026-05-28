@@ -28,7 +28,7 @@ This directory contains example files for deploying `abaper` using Docker.
 
 ## Configuration
 
-The example uses the published Docker image `bluefunda/abaper:latest`.
+The example uses the published Docker image `ghcr.io/bluefunda/abaper:latest`.
 
 ### Environment Variables
 

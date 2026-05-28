@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build (e.g. v1.4.5)'
+        description: 'Release tag to build (e.g. v2.0.0)'
         required: true
         type: string
 
@@ -26,6 +26,7 @@ jobs:
     uses: bluefunda/release-foundry/.github/workflows/go-binary-release.yml@main
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || needs.release.outputs.tag_name }}
+      goprivate: ''
     permissions:
       contents: write
     secrets:

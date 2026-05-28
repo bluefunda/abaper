@@ -49,8 +49,8 @@ go install github.com/bluefunda/abaper/cmd/abaper@latest
 ### Docker
 
 ```bash
-docker pull bluefunda/abaper
-docker run --rm bluefunda/abaper version
+docker pull ghcr.io/bluefunda/abaper
+docker run --rm ghcr.io/bluefunda/abaper version
 ```
 
 ### From GitHub Releases
@@ -279,8 +279,8 @@ man abaper
 ## Docker Usage
 
 ```bash
-docker pull bluefunda/abaper:latest
-docker run --rm -v ~/.abaper:/root/.abaper bluefunda/abaper status
+docker pull ghcr.io/bluefunda/abaper:latest
+docker run --rm -v ~/.abaper:/root/.abaper ghcr.io/bluefunda/abaper status
 ```
 
 ## Developer Setup
@@ -337,7 +337,7 @@ Releases are automated via [release-please](https://github.com/googleapis/releas
 3. Merging the Release PR triggers:
    - GoReleaser builds multi-platform binaries (named `abaper_<version>_<os>_<arch>`)
    - Binaries attached to GitHub Release
-   - Docker image pushed to `bluefunda/abaper`
+   - Docker image pushed to `ghcr.io/bluefunda/abaper`
 
 ## License
 
