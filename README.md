@@ -1,8 +1,7 @@
-# ABAPer CLI
+# ABAPer
 
-[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/bluefunda/abaper)](https://goreportcard.com/report/github.com/bluefunda/abaper)
-[![pkg.go.dev](https://pkg.go.dev/badge/github.com/bluefunda/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/abaper)
+[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/abaper)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 Command line interface and Go SDK for the [ABAPer](https://abaper.bluefunda.com) platform — generate, deploy, and test ABAP objects directly from your terminal, and a reusable Go library for SAP ABAP development tooling.
 
@@ -241,18 +240,17 @@ This repo also exports a reusable Go SDK for SAP ABAP development tooling.
 ### ADT Client (direct SAP connection)
 
 ```go
-import (
-    "github.com/bluefunda/abaper/types"
-    "github.com/bluefunda/abaper/internal/adt"
-)
+import "github.com/bluefunda/abaper/lib"
 
-cfg := types.ADTConfig{
-    Host:     "my-sap.example.com",
-    Client:   "100",
-    Username: "user",
-    Password: "pass",
+client, err := lib.CreateADTClient(
+    "my-sap.example.com:8000",
+    "100",        // SAP client
+    "user",
+    "pass",
+)
+if err != nil {
+    log.Fatal(err)
 }
-client := adt.NewADTClient(cfg)
 src, err := client.GetProgram("ZMY_PROGRAM")
 ```
 
