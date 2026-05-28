@@ -23,7 +23,7 @@ for platform in "${PLATFORMS[@]}"; do
   echo "Building $os/$arch -> $output"
 
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build \
-    -ldflags "-s -w -X github.com/bluefunda/abaper-cli/internal/commands.version=$VERSION" \
+    -ldflags "-s -w -X github.com/bluefunda/abaper/internal/commands.version=$VERSION" \
     -o "$output" \
     ./cmd/abaper
 done

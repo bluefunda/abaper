@@ -21,7 +21,7 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/bluefunda/abaper-cli/internal/commands.version={{ .Version }}
+      - -X github.com/bluefunda/abaper/internal/commands.version={{ .Version }}
     flags:
       - -trimpath
 
@@ -54,7 +54,7 @@ nfpms:
     vendor: Bluefunda
     maintainer: Bluefunda <support@bluefunda.com>
     description: Cross-platform CLI for the ABAPer platform.
-    license: MIT
+    license: Apache-2.0
     formats:
       - deb
       - rpm
@@ -87,7 +87,7 @@ homebrew_casks:
       - abaper
     binaries:
       - abaper
-    homepage: https://github.com/bluefunda/abaper-cli
+    homepage: https://github.com/bluefunda/abaper
     description: CLI for the ABAPer platform — ABAP development and deployment tooling
     directory: Casks
     repository:
@@ -111,7 +111,7 @@ changelog:
 release:
   github:
     owner: bluefunda
-    name: abaper-cli
+    name: abaper
   draft: false
   replace_existing_draft: true
   name_template: "ABAPer CLI v{{ .Version }}"
@@ -130,40 +130,40 @@ release:
 
     **Linux (install script):**
     ```bash
-    curl -fsSL https://github.com/bluefunda/abaper-cli/releases/latest/download/install.sh | sh
+    curl -fsSL https://github.com/bluefunda/abaper/releases/latest/download/install.sh | sh
     ```
 
     **Debian/Ubuntu (x86_64):**
     ```bash
-    curl -sL https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.deb -o abaper.deb
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.deb -o abaper.deb
     sudo dpkg -i abaper.deb
     ```
 
     **Debian/Ubuntu (ARM64):**
     ```bash
-    curl -sL https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.deb -o abaper.deb
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.deb -o abaper.deb
     sudo dpkg -i abaper.deb
     ```
 
     **RPM-based (x86_64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.rpm
+    sudo rpm -i https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.rpm
     ```
 
     **RPM-based (ARM64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.rpm
+    sudo rpm -i https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.rpm
     ```
 
     **macOS (manual):**
     ```bash
-    curl -sL https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_darwin_arm64.zip -o abaper.zip
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_darwin_arm64.zip -o abaper.zip
     unzip abaper.zip && chmod +x abaper && sudo mv abaper /usr/local/bin/
     ```
 
     **Linux (manual):**
     ```bash
-    curl -sL https://github.com/bluefunda/abaper-cli/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.tar.gz | tar xz
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.tar.gz | tar xz
     chmod +x abaper && sudo mv abaper /usr/local/bin/
     ```
 

@@ -14,7 +14,7 @@ COPY . .
 
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-X github.com/bluefunda/abaper-cli/internal/commands.version=${VERSION}" \
+    -ldflags "-X github.com/bluefunda/abaper/internal/commands.version=${VERSION}" \
     -o /abaper ./cmd/abaper
 
 FROM alpine:3.21

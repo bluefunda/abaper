@@ -1,10 +1,13 @@
-# CLAUDE.md — abaper-cli
+# CLAUDE.md — abaper
 
 ## What is this?
 
-CLI client for the ABAPer platform. Communicates with ABAPer APIs through the KrakenD gateway (`abaper-gw`).
+CLI and Go SDK for the ABAPer platform and SAP ABAP development.
 
-Module: `github.com/bluefunda/abaper-cli` | Go 1.25
+- **CLI**: Communicates with ABAPer APIs through the KrakenD gateway (`abaper-gw`) via OAuth2
+- **SDK**: Direct SAP ADT REST client (`types/`, `internal/adt/`), LSP server (`lsp/`, `internal/lsp/`), REST server (`rest/`)
+
+Module: `github.com/bluefunda/abaper` | Go 1.25.1 | License: Apache 2.0
 
 ## Build & Verify
 
@@ -12,11 +15,11 @@ Module: `github.com/bluefunda/abaper-cli` | Go 1.25
 make build        # Build for current platform
 make build-all    # Cross-compile for all platforms
 make test         # Run tests
-make lint         # Run linter
+make lint         # Run golangci-lint
 make vet          # Run go vet
 ```
 
-## Commands
+## CLI Commands
 
 `login`, `logout`, `status`, `generate`, `deploy`, `test`, `list objects`, `list packages`, `ai chat`, `version`
 
@@ -28,6 +31,15 @@ make vet          # Run go vet
 - API calls go through gateway at `/abaper/api/v1/*`
 - Response format: `{ "success": bool, "data": T, "error": string }`
 - Headers: `Authorization: Bearer`, `X-Realm`, `X-SAP-*`
+
+## SDK Architecture
+
+- `types/adt.go` — `ADTClient` interface (~50 methods), all ADT data structs
+- `internal/adt/client.go` — single `ADTClientImpl` (HTTP calls to SAP ADT REST)
+- `internal/lsp/` — LSP server internals (backends, handlers, document manager)
+- `lsp/` — public LSP server wrapper (`NewServer`, `RunStdio`, `RunTCP`)
+- `rest/` — REST API server with `/api/v1/` endpoints
+- `lib/` — library wrapper for embedding
 
 ## Conventions
 
