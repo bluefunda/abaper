@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.7.1](https://github.com/bluefunda/abaper/compare/v1.7.0...v1.7.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* wait for Apple notarization before archiving macOS binaries ([#48](https://github.com/bluefunda/abaper/issues/48)) ([01df3da](https://github.com/bluefunda/abaper/commit/01df3daaa9540b140134578d153dd8e3b1574e43))
+
 ## [1.7.0](https://github.com/bluefunda/abaper/compare/v1.6.0...v1.7.0) (2026-05-29)
 
 
