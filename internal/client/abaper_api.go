@@ -23,10 +23,14 @@ type APIResponse[T any] struct {
 
 // Client communicates with ABAPer APIs exposed via abaper-gw.
 type Client struct {
-	BaseURL    string
-	Token      string
-	Realm      string
-	HTTPClient *http.Client
+	BaseURL     string
+	Token       string
+	Realm       string
+	HTTPClient  *http.Client
+	SAPHost     string
+	SAPClient   string
+	SAPUser     string
+	SAPPassword string
 }
 
 // NewClient creates a Client from the current config and stored tokens.
@@ -54,14 +58,25 @@ func NewClient() (*Client, error) {
 		}
 	}
 
-	return &Client{
+	c := &Client{
 		BaseURL: cfg.BaseURL,
 		Token:   tokens.AccessToken,
 		Realm:   cfg.Realm,
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-	}, nil
+	}
+
+	if sysCfg, err := config.LoadSystems(); err == nil {
+		if active := sysCfg.GetActive(); active != nil {
+			c.SAPHost = active.Host
+			c.SAPClient = active.Client
+			c.SAPUser = active.Username
+			c.SAPPassword = active.Password
+		}
+	}
+
+	return c, nil
 }
 
 // Do sends an HTTP request with auth headers, retry logic, and structured error handling.
@@ -85,6 +100,12 @@ func (c *Client) Do(method, path string, body any) (*http.Response, error) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 		req.Header.Set("X-Realm", c.Realm)
+		if c.SAPHost != "" {
+			req.Header.Set("X-SAP-Host", c.SAPHost)
+			req.Header.Set("X-SAP-Client", c.SAPClient)
+			req.Header.Set("X-SAP-User", c.SAPUser)
+			req.Header.Set("X-SAP-Password", c.SAPPassword)
+		}
 
 		// Reset body reader for retries
 		if body != nil {

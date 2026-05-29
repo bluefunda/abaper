@@ -1,17 +1,30 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/bluefunda/abaper/internal/config"
 	"github.com/bluefunda/abaper/tui/slash"
 )
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	chat   *chatModel
-	width  int
-	height int
+	view       appView
+	chat       *chatModel
+	systemForm *systemFormModel
+	width      int
+	height     int
 }
+
+type appView int
+
+const (
+	viewChat appView = iota
+	viewSystemForm
+)
 
 // New creates the root TUI model.
 func New(version string) *Model {
@@ -25,6 +38,31 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// System form is active — route messages there first
+	if m.view == viewSystemForm && m.systemForm != nil {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			m.systemForm.width = msg.Width
+			m.systemForm.height = msg.Height
+			return m, nil
+
+		case SystemFormSavedMsg:
+			return m, m.handleSystemSaved(msg.System)
+
+		case SystemFormCancelledMsg:
+			m.view = viewChat
+			m.systemForm = nil
+			return m, nil
+		}
+
+		newForm, cmd := m.systemForm.Update(msg)
+		m.systemForm = newForm.(*systemFormModel)
+		return m, cmd
+	}
+
+	// Chat view
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -33,7 +71,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global quit (Ctrl+C / Ctrl+D) when not streaming
 		if !m.chat.streaming {
 			switch msg.Type {
 			case tea.KeyCtrlC, tea.KeyCtrlD:
@@ -41,7 +78,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	// Slash command outcomes that live at app level
 	case slash.QuitMsg:
 		return m, tea.Quit
 
@@ -58,23 +94,99 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.rebuildViewport()
 		return m, nil
 
+	case slash.SystemOpenMsg:
+		if msg.EditID == "list" {
+			return m, m.showSystemList()
+		}
+		var existing *config.SAPSystem
+		if msg.EditID != "" {
+			if sysCfg, err := config.LoadSystems(); err == nil {
+				existing = sysCfg.FindByNameOrID(msg.EditID)
+			}
+		}
+		m.systemForm = newSystemForm(existing)
+		m.systemForm.width = m.width
+		m.systemForm.height = m.height
+		m.view = viewSystemForm
+		return m, m.systemForm.Init()
+
 	case slash.UnknownCmdMsg:
-		// stub commands: silently ignore for now
 		return m, nil
 	}
 
-	// Delegate everything else to the chat model
 	newChat, cmd := m.chat.Update(msg)
 	m.chat = newChat
 	return m, cmd
+}
+
+func (m *Model) showSystemList() tea.Cmd {
+	sysCfg, err := config.LoadSystems()
+	if err != nil || len(sysCfg.Systems) == 0 {
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: "No SAP systems configured. Use `/system add` or `abaper system add --help`.",
+		})
+		m.chat.rebuildViewport()
+		return nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("**SAP Systems**\n\n")
+	for _, s := range sysCfg.Systems {
+		marker := "  "
+		if s.ID == sysCfg.Active {
+			marker = "● "
+		}
+		fmt.Fprintf(&sb, "%s**%s** — %s (client %s, user %s)\n", marker, s.Name, s.Host, s.Client, s.Username)
+	}
+	sb.WriteString("\nUse `/system add` to add or `/system edit <name>` to edit.")
+
+	m.chat.messages = append(m.chat.messages, chatMessage{
+		kind:    kindSystem,
+		content: sb.String(),
+	})
+	m.chat.rebuildViewport()
+	return nil
+}
+
+func (m *Model) handleSystemSaved(sys config.SAPSystem) tea.Cmd {
+	m.view = viewChat
+	m.systemForm = nil
+
+	sysCfg, err := config.LoadSystems()
+	if err != nil {
+		sysCfg = &config.SystemsConfig{}
+	}
+
+	var action string
+	if sys.ID != "" {
+		sysCfg.UpdateSystem(sys.ID, sys)
+		action = fmt.Sprintf("Updated SAP system **%s** (%s)", sys.Name, sys.Host)
+	} else {
+		id := sysCfg.AddSystem(sys)
+		sysCfg.Active = id
+		action = fmt.Sprintf("Added SAP system **%s** (%s) — set as active", sys.Name, sys.Host)
+	}
+
+	_ = config.SaveSystems(sysCfg)
+
+	m.chat.messages = append(m.chat.messages, chatMessage{
+		kind:    kindSystem,
+		content: "✓ " + action,
+	})
+	m.chat.rebuildViewport()
+	return nil
 }
 
 func (m *Model) View() string {
 	if m.width == 0 {
 		return ""
 	}
+	if m.view == viewSystemForm && m.systemForm != nil {
+		return m.systemForm.View()
+	}
 	return m.chat.View()
 }
 
-const helpText = `Commands: /help /clear /compact /object /activate /transport /diff /review /test /profile /model /cost /settings /logout /quit
-Keys: Enter submit · Shift+Enter newline · Ctrl+C/Esc cancel stream · Ctrl+C quit · ↑↓ scroll · / commands`
+const helpText = `Commands: /help /clear /system /system add /system list /quit
+Keys: Enter submit · Shift+Enter newline · Ctrl+C/Esc cancel stream · Tab navigate form · Ctrl+T test connection · Ctrl+S save`

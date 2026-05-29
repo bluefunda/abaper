@@ -11,6 +11,10 @@ type QuitMsg struct{}
 // HelpMsg tells the chat model to show help text.
 type HelpMsg struct{}
 
+// SystemOpenMsg tells the app to open the SAP system form.
+// EditID is empty for "add", or a system ID/name for "edit".
+type SystemOpenMsg struct{ EditID string }
+
 // UnknownCmdMsg is returned when a slash command is not found.
 type UnknownCmdMsg struct{ Name string }
 
@@ -33,6 +37,31 @@ var Registry = []Command{
 		Name:        "clear",
 		Description: "Clear conversation history",
 		Handler:     func(_ []string) tea.Cmd { return func() tea.Msg { return ClearMsg{} } },
+	},
+	{
+		Name:        "system",
+		Description: "Manage SAP systems: add, list, edit <name>",
+		Handler: func(args []string) tea.Cmd {
+			// /system list → show list in chat (handled in app.go via SystemOpenMsg with special ID)
+			// /system edit <name> → open form pre-filled
+			// /system or /system add → open blank form
+			sub := ""
+			if len(args) > 0 {
+				sub = args[0]
+			}
+			switch sub {
+			case "edit":
+				id := ""
+				if len(args) > 1 {
+					id = args[1]
+				}
+				return func() tea.Msg { return SystemOpenMsg{EditID: id} }
+			case "list":
+				return func() tea.Msg { return SystemOpenMsg{EditID: "list"} }
+			default: // "add" or bare /system
+				return func() tea.Msg { return SystemOpenMsg{EditID: ""} }
+			}
+		},
 	},
 	{
 		Name:        "compact",
@@ -67,11 +96,6 @@ var Registry = []Command{
 	{
 		Name:        "test",
 		Description: "Generate ABAP unit tests",
-		Handler:     func(_ []string) tea.Cmd { return nil },
-	},
-	{
-		Name:        "profile",
-		Description: "Switch SAP system profile",
 		Handler:     func(_ []string) tea.Cmd { return nil },
 	},
 	{

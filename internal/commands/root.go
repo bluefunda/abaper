@@ -52,6 +52,7 @@ func init() {
 	rootCmd.AddCommand(aiCmd)
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(systemCmd)
 }
 
 func Execute() error {
