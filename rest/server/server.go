@@ -39,41 +39,47 @@ func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient
 	}
 }
 
-// Start starts the REST server
-func (rs *RestServer) Start(port string) {
-	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("port", port))
+// Handler returns an http.Handler with all routes registered on a private mux.
+// Using a private mux (not http.DefaultServeMux) allows multiple RestServer
+// instances and makes the server testable with httptest.NewServer.
+func (rs *RestServer) Handler() http.Handler {
+	mux := http.NewServeMux()
 
 	// API endpoints for CLI parity (no AI)
-	http.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
-	http.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
-	http.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
-	http.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
-	http.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
+	mux.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
+	mux.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
+	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
+	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
+	mux.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
 
 	// GitHub proxy endpoints
-	http.HandleFunc("/api/v1/github/oauth/callback", rs.corsHandler(rs.githubOAuthCallbackHandler))
-	http.HandleFunc("/api/v1/github/user", rs.corsHandler(rs.githubUserHandler))
-	http.HandleFunc("/api/v1/github/branches", rs.corsHandler(rs.githubBranchesHandler))
-	http.HandleFunc("/api/v1/github/tree", rs.corsHandler(rs.githubTreeHandler))
-	http.HandleFunc("/api/v1/github/file", rs.corsHandler(rs.githubFileHandler))
+	mux.HandleFunc("/api/v1/github/oauth/callback", rs.corsHandler(rs.githubOAuthCallbackHandler))
+	mux.HandleFunc("/api/v1/github/user", rs.corsHandler(rs.githubUserHandler))
+	mux.HandleFunc("/api/v1/github/branches", rs.corsHandler(rs.githubBranchesHandler))
+	mux.HandleFunc("/api/v1/github/tree", rs.corsHandler(rs.githubTreeHandler))
+	mux.HandleFunc("/api/v1/github/file", rs.corsHandler(rs.githubFileHandler))
 
 	// Removed AI endpoints - return feature removed messages
-	http.HandleFunc("/api/v1/ai/analyze", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/review", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/optimize", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/create", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/analyze", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/review", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/optimize", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/create", rs.corsHandler(rs.removedAIHandler))
 
 	// Legacy AI endpoints
-	http.HandleFunc("/generate-code", rs.corsHandler(rs.generateCodeHandler))
-	http.HandleFunc("/generate-code-stream", rs.corsHandler(rs.generateCodeStreamHandler))
+	mux.HandleFunc("/generate-code", rs.corsHandler(rs.generateCodeHandler))
+	mux.HandleFunc("/generate-code-stream", rs.corsHandler(rs.generateCodeStreamHandler))
 
 	// Health and version endpoints
-	http.HandleFunc("/health", rs.healthHandler)
-	http.HandleFunc("/version", rs.versionHandler)
+	mux.HandleFunc("/health", rs.healthHandler)
+	mux.HandleFunc("/version", rs.versionHandler)
 
-	rs.logger.Info("REST server endpoints registered", zap.Int("endpoint_count", 17))
+	return mux
+}
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+// Start starts the REST server on the given port.
+func (rs *RestServer) Start(port string) {
+	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("port", port))
+	if err := http.ListenAndServe(":"+port, rs.Handler()); err != nil {
 		rs.logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
