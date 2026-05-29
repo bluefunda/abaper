@@ -2,6 +2,19 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.7.0](https://github.com/bluefunda/abaper/compare/v1.6.0...v1.7.0) (2026-05-29)
+
+
+### Features
+
+* **system:** add SAP system management to CLI and TUI ([3de5273](https://github.com/bluefunda/abaper/commit/3de52732ecde4cb13ff67ea3311ef789b14f9469))
+
+
+### Bug Fixes
+
+* **system:** inject X-SAP-* headers into StreamChat requests ([2a1c5b5](https://github.com/bluefunda/abaper/commit/2a1c5b5f68098cd13bbe527e2681c3105f206ec8))
+* **system:** suppress unchecked errcheck on tabwriter fmt calls ([c55909d](https://github.com/bluefunda/abaper/commit/c55909d18e8e8e204233178c7f18479185a04a2e))
+
 ## [1.6.0](https://github.com/bluefunda/abaper/compare/v1.5.1...v1.6.0) (2026-05-29)
 
 
