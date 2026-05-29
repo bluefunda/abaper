@@ -15,6 +15,14 @@ type HelpMsg struct{}
 // EditID is empty for "add", or a system ID/name for "edit".
 type SystemOpenMsg struct{ EditID string }
 
+// ObjectSearchMsg tells the app to search for ABAP objects.
+// Pattern is the search pattern (SAP wildcards, e.g. ZMY*).
+// ObjectType is optional, e.g. "PROG/P", "CLAS/OC".
+type ObjectSearchMsg struct {
+	Pattern    string
+	ObjectType string
+}
+
 // UnknownCmdMsg is returned when a slash command is not found.
 type UnknownCmdMsg struct{ Name string }
 
@@ -70,8 +78,18 @@ var Registry = []Command{
 	},
 	{
 		Name:        "object",
-		Description: "Load ABAP object from SAP",
-		Handler:     func(_ []string) tea.Cmd { return nil },
+		Description: "Search ABAP objects: /object <pattern> [type], e.g. /object ZMY* PROG/P",
+		Handler: func(args []string) tea.Cmd {
+			pattern := ""
+			objType := ""
+			if len(args) > 0 {
+				pattern = args[0]
+			}
+			if len(args) > 1 {
+				objType = args[1]
+			}
+			return func() tea.Msg { return ObjectSearchMsg{Pattern: pattern, ObjectType: objType} }
+		},
 	},
 	{
 		Name:        "activate",
