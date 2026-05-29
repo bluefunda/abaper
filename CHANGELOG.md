@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.6.0](https://github.com/bluefunda/abaper/compare/v1.5.1...v1.6.0) (2026-05-29)
+
+
+### Features
+
+* Bubble Tea TUI, SDK reliability, and idiomatic Go refactor ([#39](https://github.com/bluefunda/abaper/issues/39)) ([05c12b8](https://github.com/bluefunda/abaper/commit/05c12b8dc2dd366140542a2cefed99dc4cbf0716))
+
 ## [1.5.1](https://github.com/bluefunda/abaper/compare/v1.5.0...v1.5.1) (2026-05-28)
 
 
