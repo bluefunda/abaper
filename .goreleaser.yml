@@ -80,6 +80,8 @@ notarize:
         issuer_id: "{{ .Env.NOTARIZATION_ISSUER_ID }}"
         key_id: "{{ .Env.NOTARIZATION_KEY_ID }}"
         key: "{{ .Env.NOTARIZATION_KEY }}"
+        wait: true
+        timeout: 10m
 
 homebrew_casks:
   - name: abaper
