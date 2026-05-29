@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
 	"github.com/bluefunda/abaper/tui/slash"
 )
@@ -110,6 +111,54 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.view = viewSystemForm
 		return m, m.systemForm.Init()
 
+	case slash.SourcePreviewMsg:
+		if msg.Name == "" || msg.ObjectType == "" {
+			m.chat.messages = append(m.chat.messages, chatMessage{
+				kind:    kindSystem,
+				content: "Usage: `/source <name> <type>` — e.g. `/source ZHELLO_PROGRAM PROG/P`",
+			})
+			m.chat.rebuildViewport()
+			return m, nil
+		}
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: fmt.Sprintf("Fetching **%s** (%s)…", msg.Name, msg.ObjectType),
+		})
+		m.chat.rebuildViewport()
+		return m, doGetSource(msg.Name, msg.ObjectType)
+
+	case sourceResultMsg:
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: msg.content,
+		})
+		m.chat.rebuildViewport()
+		return m, nil
+
+	case slash.ObjectSearchMsg:
+		if msg.Pattern == "" {
+			m.chat.messages = append(m.chat.messages, chatMessage{
+				kind:    kindSystem,
+				content: "Usage: `/object <pattern> [type]` — e.g. `/object ZMY*` or `/object ZCL* CLAS/OC`",
+			})
+			m.chat.rebuildViewport()
+			return m, nil
+		}
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: fmt.Sprintf("Searching for **%s**…", msg.Pattern),
+		})
+		m.chat.rebuildViewport()
+		return m, doSearch(msg.Pattern, msg.ObjectType)
+
+	case searchResultMsg:
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: msg.content,
+		})
+		m.chat.rebuildViewport()
+		return m, nil
+
 	case slash.UnknownCmdMsg:
 		return m, nil
 	}
@@ -188,5 +237,57 @@ func (m *Model) View() string {
 	return m.chat.View()
 }
 
-const helpText = `Commands: /help /clear /system /system add /system list /quit
+const helpText = `Commands: /help /clear /source /object /system /system add /system list /quit
 Keys: Enter submit · Shift+Enter newline · Ctrl+C/Esc cancel stream · Tab navigate form · Ctrl+T test connection · Ctrl+S save`
+
+type searchResultMsg struct{ content string }
+type sourceResultMsg struct{ content string }
+
+func doGetSource(name, objectType string) tea.Cmd {
+	return func() tea.Msg {
+		c, err := client.NewClient()
+		if err != nil {
+			return sourceResultMsg{content: "Error: " + err.Error()}
+		}
+		obj, err := c.GetObject(objectType, name)
+		if err != nil {
+			return sourceResultMsg{content: "Error: " + err.Error()}
+		}
+		source, _ := (*obj)["source"].(string)
+		if source == "" {
+			return sourceResultMsg{content: fmt.Sprintf("No source found for **%s** (%s).", name, objectType)}
+		}
+		lines := strings.Count(source, "\n") + 1
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "**%s** (%s) — %d lines  ↑↓ PgUp PgDn to scroll\n\n```abap\n%s\n```", name, objectType, lines, source)
+		return sourceResultMsg{content: sb.String()}
+	}
+}
+
+func doSearch(pattern, objectType string) tea.Cmd {
+	return func() tea.Msg {
+		c, err := client.NewClient()
+		if err != nil {
+			return searchResultMsg{content: "Search error: " + err.Error()}
+		}
+		objects, err := c.SearchObjects(pattern, objectType)
+		if err != nil {
+			return searchResultMsg{content: "Search error: " + err.Error()}
+		}
+		if len(objects) == 0 {
+			return searchResultMsg{content: fmt.Sprintf("No objects found matching **%s**.", pattern)}
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "**Search results for %s** (%d)\n\n", pattern, len(objects))
+		sb.WriteString("| TYPE | NAME | DESCRIPTION |\n")
+		sb.WriteString("|------|------|-------------|\n")
+		for _, obj := range objects {
+			objType, _ := obj["type"].(string)
+			objName, _ := obj["name"].(string)
+			desc, _ := obj["description"].(string)
+			fmt.Fprintf(&sb, "| %s | %s | %s |\n", objType, objName, desc)
+		}
+		return searchResultMsg{content: sb.String()}
+	}
+}

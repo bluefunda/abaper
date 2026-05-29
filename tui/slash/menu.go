@@ -39,14 +39,18 @@ func (m *MenuModel) Height() int {
 }
 
 func (m *MenuModel) refilter() {
-	if m.filter == "" {
+	// Only match on the command name (first word); the rest is args.
+	word := ""
+	if parts := strings.Fields(m.filter); len(parts) > 0 {
+		word = strings.ToLower(parts[0])
+	}
+	if word == "" {
 		m.filtered = Registry
 	} else {
-		q := strings.ToLower(m.filter)
 		var out []Command
 		for _, c := range Registry {
-			if strings.Contains(strings.ToLower(c.Name), q) ||
-				strings.Contains(strings.ToLower(c.Description), q) {
+			if strings.Contains(strings.ToLower(c.Name), word) ||
+				strings.Contains(strings.ToLower(c.Description), word) {
 				out = append(out, c)
 			}
 		}
@@ -102,6 +106,10 @@ func (m *MenuModel) Update(msg tea.Msg) (*MenuModel, tea.Cmd) {
 			m.refilter()
 		}
 
+	case tea.KeySpace:
+		m.filter += " "
+		m.refilter()
+
 	case tea.KeyRunes:
 		m.filter += string(keyMsg.Runes)
 		m.refilter()
@@ -112,10 +120,7 @@ func (m *MenuModel) Update(msg tea.Msg) (*MenuModel, tea.Cmd) {
 
 // View renders the slash menu as a bordered popup.
 func (m *MenuModel) View() string {
-	w := m.width
-	if w < 42 {
-		w = 42
-	}
+	w := max(m.width, 42)
 	innerW := w - 4 // account for border + padding
 
 	muted := lipgloss.NewStyle().Foreground(styles.ColorMuted)
@@ -141,7 +146,7 @@ func (m *MenuModel) View() string {
 		for i, cmd := range m.filtered {
 			nameStr := "/" + cmd.Name
 			// Pad name to fixed width for alignment
-			nameCol := nameStr + strings.Repeat(" ", maxInt(0, 14-len(nameStr)))
+			nameCol := nameStr + strings.Repeat(" ", max(0, 14-len(nameStr)))
 			desc := cmd.Description
 
 			if i == m.cursor {
@@ -167,9 +172,3 @@ func (m *MenuModel) View() string {
 		Render(sb.String())
 }
 
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
