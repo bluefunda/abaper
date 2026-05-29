@@ -5,3 +5,7 @@ dist/
 *.out
 .env
 .DS_Store
+
+# Local workspace file — contains absolute paths, not for VCS
+go.work
+go.work.sum

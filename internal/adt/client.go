@@ -1,12 +1,14 @@
 package adt
 
 import (
+	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -19,23 +21,25 @@ import (
 
 // ADT Endpoint Constants
 const (
-	ADT_PROGRAMS_ENDPOINT         = "/programs/programs/%s/source/main"
-	ADT_CLASSES_ENDPOINT          = "/oo/classes/%s/source/main"
-	ADT_FUNCTION_GROUPS_ENDPOINT  = "/functions/groups/%s/source/main"
-	ADT_FUNCTIONS_ENDPOINT        = "/functions/groups/%s/fmodules/%s/source/main"
-	ADT_TABLES_ENDPOINT           = "/ddic/tables/%s/source/main"
-	ADT_STRUCTURES_ENDPOINT       = "/ddic/structures/%s/source/main"
-	ADT_INCLUDES_ENDPOINT         = "/programs/includes/%s/source/main"
-	ADT_INTERFACES_ENDPOINT       = "/oo/interfaces/%s/source/main"
-	ADT_DOMAINS_ENDPOINT          = "/ddic/domains/%s/source/main"
-	ADT_DATA_ELEMENTS_ENDPOINT    = "/ddic/dataelements/%s"
-	ADT_PACKAGE_CONTENTS_ENDPOINT = "/repository/informationsystem/nodecontents"
-	ADT_SEARCH_ENDPOINT           = "/repository/informationsystem/search"
-	ADT_TRANSACTION_ENDPOINT      = "/repository/informationsystem/objectproperties/values"
-	ADT_PROGRAMS_CREATE_ENDPOINT  = "/programs/programs"
-	ADT_CLASSES_CREATE_ENDPOINT   = "/oo/classes"
-	ADT_TABLE_CONTENTS_ENDPOINT   = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
+	programsEndpoint        = "/programs/programs/%s/source/main"
+	classesEndpoint         = "/oo/classes/%s/source/main"
+	functionGroupsEndpoint  = "/functions/groups/%s/source/main"
+	functionsEndpoint       = "/functions/groups/%s/fmodules/%s/source/main"
+	tablesEndpoint          = "/ddic/tables/%s/source/main"
+	structuresEndpoint      = "/ddic/structures/%s/source/main"
+	includesEndpoint        = "/programs/includes/%s/source/main"
+	interfacesEndpoint      = "/oo/interfaces/%s/source/main"
+	domainsEndpoint         = "/ddic/domains/%s/source/main"
+	dataElementsEndpoint    = "/ddic/dataelements/%s"
+	searchEndpoint = "/repository/informationsystem/search"
+	transactionEndpoint     = "/repository/informationsystem/objectproperties/values"
+	programsCreateEndpoint  = "/programs/programs"
+	classesCreateEndpoint   = "/oo/classes"
+	tableContentsEndpoint   = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
 )
+
+// ErrNotFound is returned when an ADT object does not exist (HTTP 404).
+var ErrNotFound = errors.New("object not found")
 
 // ADTClientImpl implements the ADTClient interface using shared types
 type ADTClientImpl struct {
@@ -50,7 +54,7 @@ type ADTClientImpl struct {
 }
 
 // NewADTClient creates a new ADT client with improved configuration
-func NewADTClient(config *types.ADTConfig) types.ADTClient {
+func NewADTClient(config *types.ADTConfig) *ADTClientImpl {
 	// Set defaults
 	if config.Language == "" {
 		config.Language = "EN"
@@ -59,10 +63,10 @@ func NewADTClient(config *types.ADTConfig) types.ADTClient {
 		config.Client = "100"
 	}
 	if config.ConnectTimeout == 0 {
-		config.ConnectTimeout = 30
+		config.ConnectTimeout = 30 * time.Second
 	}
 	if config.RequestTimeout == 0 {
-		config.RequestTimeout = 60
+		config.RequestTimeout = 60 * time.Second
 	}
 
 	// Normalize and validate the host URL
@@ -87,7 +91,7 @@ func NewADTClient(config *types.ADTConfig) types.ADTClient {
 	}
 
 	client := &http.Client{
-		Timeout:   time.Duration(config.RequestTimeout) * time.Second,
+		Timeout:   config.RequestTimeout,
 		Transport: transport,
 		Jar:       jar,
 	}
@@ -182,126 +186,59 @@ func (c *ADTClientImpl) IsAuthenticated() bool {
 	return c.authenticated && c.csrfToken != ""
 }
 
-// GetProgram retrieves ABAP program source code with enhanced error handling
-func (c *ADTClientImpl) GetProgram(programName string) (*types.ADTSourceCode, error) {
+// getSource is a shared helper for the single-name Get* source retrieval methods.
+func (c *ADTClientImpl) getSource(ctx context.Context, objectType, name, endpoint string) (*types.ADTSourceCode, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
-
-	c.logger.Info("Retrieving program", zap.String("program", programName))
-
-	programName = strings.ToUpper(strings.TrimSpace(programName))
-	url := fmt.Sprintf("%s/programs/programs/%s/source/main", c.baseURL, programName)
-
-	req, err := http.NewRequest("GET", url, nil)
+	name = strings.ToUpper(strings.TrimSpace(name))
+	url := fmt.Sprintf("%s"+endpoint, c.baseURL, name)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
-
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
-
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: %s %s", ErrNotFound, objectType, name)
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("authentication failed: session may have expired")
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("program %s not found (404)", programName)
-		} else if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("authentication failed (401) - session may have expired")
-		} else if resp.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("access forbidden (403) - insufficient permissions for program %s", programName)
-		}
-
-		return nil, fmt.Errorf("failed to get program %s: HTTP %d - %s", programName, resp.StatusCode, string(body))
+		return nil, fmt.Errorf("get %s %s: HTTP %d: %s", objectType, name, resp.StatusCode, string(body))
 	}
-
-	source, err := io.ReadAll(resp.Body)
+	src, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("read body: %w", err)
 	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: programName,
-		ObjectType: "PROG",
-		Source:     string(source),
+	return &types.ADTSourceCode{
+		ObjectName: name,
+		ObjectType: objectType,
+		Source:     string(src),
 		Version:    resp.Header.Get("ETag"),
 		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Program retrieved successfully",
-		zap.String("program", programName),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+	}, nil
 }
 
-// GetClass retrieves ABAP class source code with enhanced error handling
-func (c *ADTClientImpl) GetClass(className string) (*types.ADTSourceCode, error) {
-	if !c.IsAuthenticated() {
-		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
-	}
+// GetProgram retrieves ABAP program source code.
+func (c *ADTClientImpl) GetProgram(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "PROG", name, programsEndpoint)
+}
 
-	c.logger.Info("Retrieving class", zap.String("class", className))
-
-	className = strings.ToUpper(strings.TrimSpace(className))
-	url := fmt.Sprintf("%s/oo/classes/%s/source/main", c.baseURL, className)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("class %s not found (404)", className)
-		} else if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("authentication failed (401) - session may have expired")
-		} else if resp.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("access forbidden (403) - insufficient permissions for class %s", className)
-		}
-
-		return nil, fmt.Errorf("failed to get class %s: HTTP %d - %s", className, resp.StatusCode, string(body))
-	}
-
-	source, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: className,
-		ObjectType: "CLAS",
-		Source:     string(source),
-		Version:    resp.Header.Get("ETag"),
-		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Class retrieved successfully",
-		zap.String("class", className),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+// GetClass retrieves ABAP class source code.
+func (c *ADTClientImpl) GetClass(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "CLAS", name, classesEndpoint)
 }
 
 // GetFunction retrieves ABAP function module source code
-func (c *ADTClientImpl) GetFunction(functionName, functionGroup string) (*types.ADTSourceCode, error) {
+func (c *ADTClientImpl) GetFunction(ctx context.Context, functionName, functionGroup string) (*types.ADTSourceCode, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -312,9 +249,9 @@ func (c *ADTClientImpl) GetFunction(functionName, functionGroup string) (*types.
 
 	functionName = strings.ToUpper(strings.TrimSpace(functionName))
 	functionGroup = strings.ToUpper(strings.TrimSpace(functionGroup))
-	url := fmt.Sprintf("%s"+ADT_FUNCTIONS_ENDPOINT, c.baseURL, functionGroup, functionName)
+	url := fmt.Sprintf("%s"+functionsEndpoint, c.baseURL, functionGroup, functionName)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -322,7 +259,7 @@ func (c *ADTClientImpl) GetFunction(functionName, functionGroup string) (*types.
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "text/plain")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -331,7 +268,7 @@ func (c *ADTClientImpl) GetFunction(functionName, functionGroup string) (*types.
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("function %s in group %s not found (404)", functionName, functionGroup)
+			return nil, fmt.Errorf("%w: function %s in group %s", ErrNotFound, functionName, functionGroup)
 		}
 		return nil, fmt.Errorf("failed to get function %s: HTTP %d - %s", functionName, resp.StatusCode, string(body))
 	}
@@ -358,7 +295,7 @@ func (c *ADTClientImpl) GetFunction(functionName, functionGroup string) (*types.
 }
 
 // GetFunctionGroup retrieves ABAP function group source code
-func (c *ADTClientImpl) GetFunctionGroup(functionGroup string) (*types.ADTSourceCode, error) {
+func (c *ADTClientImpl) GetFunctionGroup(ctx context.Context, functionGroup string) (*types.ADTSourceCode, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -366,9 +303,9 @@ func (c *ADTClientImpl) GetFunctionGroup(functionGroup string) (*types.ADTSource
 	c.logger.Info("Retrieving function group", zap.String("function_group", functionGroup))
 
 	functionGroup = strings.ToUpper(strings.TrimSpace(functionGroup))
-	url := fmt.Sprintf("%s"+ADT_FUNCTION_GROUPS_ENDPOINT, c.baseURL, functionGroup)
+	url := fmt.Sprintf("%s"+functionGroupsEndpoint, c.baseURL, functionGroup)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -376,7 +313,7 @@ func (c *ADTClientImpl) GetFunctionGroup(functionGroup string) (*types.ADTSource
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "text/plain")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -385,7 +322,7 @@ func (c *ADTClientImpl) GetFunctionGroup(functionGroup string) (*types.ADTSource
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("function group %s not found (404)", functionGroup)
+			return nil, fmt.Errorf("%w: function group %s", ErrNotFound, functionGroup)
 		}
 		return nil, fmt.Errorf("failed to get function group %s: HTTP %d - %s", functionGroup, resp.StatusCode, string(body))
 	}
@@ -410,220 +347,28 @@ func (c *ADTClientImpl) GetFunctionGroup(functionGroup string) (*types.ADTSource
 	return result, nil
 }
 
-// GetInclude retrieves ABAP include source code
-func (c *ADTClientImpl) GetInclude(includeName string) (*types.ADTSourceCode, error) {
-	if !c.IsAuthenticated() {
-		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
-	}
-
-	c.logger.Info("Retrieving include", zap.String("include", includeName))
-
-	includeName = strings.ToUpper(strings.TrimSpace(includeName))
-	url := fmt.Sprintf("%s"+ADT_INCLUDES_ENDPOINT, c.baseURL, includeName)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("include %s not found (404)", includeName)
-		}
-		return nil, fmt.Errorf("failed to get include %s: HTTP %d - %s", includeName, resp.StatusCode, string(body))
-	}
-
-	source, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: includeName,
-		ObjectType: "INCL",
-		Source:     string(source),
-		Version:    resp.Header.Get("ETag"),
-		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Include retrieved successfully",
-		zap.String("include", includeName),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+// GetInclude retrieves ABAP include source code.
+func (c *ADTClientImpl) GetInclude(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "INCL", name, includesEndpoint)
 }
 
-// GetInterface retrieves ABAP interface source code
-func (c *ADTClientImpl) GetInterface(interfaceName string) (*types.ADTSourceCode, error) {
-	if !c.IsAuthenticated() {
-		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
-	}
-
-	c.logger.Info("Retrieving interface", zap.String("interface", interfaceName))
-
-	interfaceName = strings.ToUpper(strings.TrimSpace(interfaceName))
-	url := fmt.Sprintf("%s"+ADT_INTERFACES_ENDPOINT, c.baseURL, interfaceName)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("interface %s not found (404)", interfaceName)
-		}
-		return nil, fmt.Errorf("failed to get interface %s: HTTP %d - %s", interfaceName, resp.StatusCode, string(body))
-	}
-
-	source, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: interfaceName,
-		ObjectType: "INTF",
-		Source:     string(source),
-		Version:    resp.Header.Get("ETag"),
-		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Interface retrieved successfully",
-		zap.String("interface", interfaceName),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+// GetInterface retrieves ABAP interface source code.
+func (c *ADTClientImpl) GetInterface(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "INTF", name, interfacesEndpoint)
 }
 
-// GetStructure retrieves ABAP structure definition
-func (c *ADTClientImpl) GetStructure(structureName string) (*types.ADTSourceCode, error) {
-	if !c.IsAuthenticated() {
-		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
-	}
-
-	c.logger.Info("Retrieving structure", zap.String("structure", structureName))
-
-	structureName = strings.ToUpper(strings.TrimSpace(structureName))
-	url := fmt.Sprintf("%s"+ADT_STRUCTURES_ENDPOINT, c.baseURL, structureName)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("structure %s not found (404)", structureName)
-		}
-		return nil, fmt.Errorf("failed to get structure %s: HTTP %d - %s", structureName, resp.StatusCode, string(body))
-	}
-
-	source, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: structureName,
-		ObjectType: "STRU",
-		Source:     string(source),
-		Version:    resp.Header.Get("ETag"),
-		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Structure retrieved successfully",
-		zap.String("structure", structureName),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+// GetStructure retrieves ABAP structure definition.
+func (c *ADTClientImpl) GetStructure(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "STRU", name, structuresEndpoint)
 }
 
-// GetTable retrieves ABAP table structure
-func (c *ADTClientImpl) GetTable(tableName string) (*types.ADTSourceCode, error) {
-	if !c.IsAuthenticated() {
-		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
-	}
-
-	c.logger.Info("Retrieving table", zap.String("table", tableName))
-
-	tableName = strings.ToUpper(strings.TrimSpace(tableName))
-	url := fmt.Sprintf("%s"+ADT_TABLES_ENDPOINT, c.baseURL, tableName)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("table %s not found (404)", tableName)
-		}
-		return nil, fmt.Errorf("failed to get table %s: HTTP %d - %s", tableName, resp.StatusCode, string(body))
-	}
-
-	source, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	result := &types.ADTSourceCode{
-		ObjectName: tableName,
-		ObjectType: "TABL",
-		Source:     string(source),
-		Version:    resp.Header.Get("ETag"),
-		ETag:       resp.Header.Get("ETag"),
-	}
-
-	c.logger.Info("Table retrieved successfully",
-		zap.String("table", tableName),
-		zap.Int("source_length", len(result.Source)))
-
-	return result, nil
+// GetTable retrieves ABAP table structure.
+func (c *ADTClientImpl) GetTable(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "TABL", name, tablesEndpoint)
 }
 
 // GetPackageContents retrieves package contents
-func (c *ADTClientImpl) GetPackageContents(packageName string) (*types.ADTPackage, error) {
+func (c *ADTClientImpl) GetPackageContents(ctx context.Context, packageName string) (*types.ADTPackage, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -636,10 +381,10 @@ func (c *ADTClientImpl) GetPackageContents(packageName string) (*types.ADTPackag
 	// This is more reliable than the nodecontents endpoint across different SAP systems
 	requestURL := fmt.Sprintf("%s%s?operation=quickSearch&query=*&packageName=%s&maxResults=1000",
 		c.baseURL,
-		ADT_SEARCH_ENDPOINT,
+		searchEndpoint,
 		url.QueryEscape(packageName))
 
-	req, err := http.NewRequest("GET", requestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -647,7 +392,7 @@ func (c *ADTClientImpl) GetPackageContents(packageName string) (*types.ADTPackag
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "application/xml")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -656,7 +401,7 @@ func (c *ADTClientImpl) GetPackageContents(packageName string) (*types.ADTPackag
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("package %s not found (404)", packageName)
+			return nil, fmt.Errorf("%w: package %s", ErrNotFound, packageName)
 		}
 		return nil, fmt.Errorf("failed to get package %s: HTTP %d - %s", packageName, resp.StatusCode, string(body))
 	}
@@ -686,7 +431,7 @@ func (c *ADTClientImpl) GetPackageContents(packageName string) (*types.ADTPackag
 }
 
 // SearchObjects searches for ABAP objects
-func (c *ADTClientImpl) SearchObjects(pattern string, objectTypes []string) (*types.ADTSearchResult, error) {
+func (c *ADTClientImpl) SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -698,11 +443,11 @@ func (c *ADTClientImpl) SearchObjects(pattern string, objectTypes []string) (*ty
 	maxResults := 100
 	searchURL := fmt.Sprintf("%s%s?operation=quickSearch&query=%s&maxResults=%d",
 		c.baseURL,
-		ADT_SEARCH_ENDPOINT,
+		searchEndpoint,
 		url.QueryEscape(pattern),
 		maxResults)
 
-	req, err := http.NewRequest("GET", searchURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -710,7 +455,7 @@ func (c *ADTClientImpl) SearchObjects(pattern string, objectTypes []string) (*ty
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "application/xml")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -728,7 +473,7 @@ func (c *ADTClientImpl) SearchObjects(pattern string, objectTypes []string) (*ty
 
 	var result types.ADTSearchResult
 	if err := xml.Unmarshal(responseBody, &result); err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("parse search response: %w", err)
 	}
 
 	c.logger.Info("Search completed successfully",
@@ -739,7 +484,7 @@ func (c *ADTClientImpl) SearchObjects(pattern string, objectTypes []string) (*ty
 }
 
 // ListPackages lists packages matching a pattern
-func (c *ADTClientImpl) ListPackages(pattern string) ([]types.ADTPackage, error) {
+func (c *ADTClientImpl) ListPackages(ctx context.Context, pattern string) ([]types.ADTPackage, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -754,10 +499,10 @@ func (c *ADTClientImpl) ListPackages(pattern string) ([]types.ADTPackage, error)
 	// Use the repository search endpoint to find packages
 	searchURL := fmt.Sprintf("%s%s?operation=quickSearch&query=%s&objectType=DEVC/K&maxResults=100",
 		c.baseURL,
-		ADT_SEARCH_ENDPOINT,
+		searchEndpoint,
 		url.QueryEscape(pattern))
 
-	req, err := http.NewRequest("GET", searchURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -765,7 +510,7 @@ func (c *ADTClientImpl) ListPackages(pattern string) ([]types.ADTPackage, error)
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "application/xml")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -823,7 +568,7 @@ func (c *ADTClientImpl) TestConnection() error {
 }
 
 // Extended methods (optional implementations)
-func (c *ADTClientImpl) GetTypeInfo(typeName string) (*types.ADTTypeInfo, error) {
+func (c *ADTClientImpl) GetTypeInfo(ctx context.Context, typeName string) (*types.ADTTypeInfo, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -833,31 +578,31 @@ func (c *ADTClientImpl) GetTypeInfo(typeName string) (*types.ADTTypeInfo, error)
 	typeName = strings.ToUpper(strings.TrimSpace(typeName))
 
 	// First try as domain
-	domainURL := fmt.Sprintf("%s"+ADT_DOMAINS_ENDPOINT, c.baseURL, typeName)
-	if source, err := c.getTypeSource(domainURL, "text/plain"); err == nil {
+	domainURL := fmt.Sprintf("%s"+domainsEndpoint, c.baseURL, typeName)
+	if source, err := c.getTypeSource(ctx, domainURL, "text/plain"); err == nil {
 		return &types.ADTTypeInfo{
 			TypeName:   typeName,
 			TypeKind:   "DOMAIN",
 			Source:     source,
-			Properties: make(map[string]interface{}),
+			Properties: make(map[string]any),
 		}, nil
 	}
 
 	// If domain fails, try as data element
-	dataElementURL := fmt.Sprintf("%s"+ADT_DATA_ELEMENTS_ENDPOINT, c.baseURL, typeName)
-	if source, err := c.getTypeSource(dataElementURL, "application/xml"); err == nil {
+	dataElementURL := fmt.Sprintf("%s"+dataElementsEndpoint, c.baseURL, typeName)
+	if source, err := c.getTypeSource(ctx, dataElementURL, "application/xml"); err == nil {
 		return &types.ADTTypeInfo{
 			TypeName:   typeName,
 			TypeKind:   "DATA_ELEMENT",
 			Source:     source,
-			Properties: make(map[string]interface{}),
+			Properties: make(map[string]any),
 		}, nil
 	}
 
 	return nil, fmt.Errorf("type %s not found as domain or data element", typeName)
 }
 
-func (c *ADTClientImpl) GetTransaction(transactionName string) (*types.ADTTransactionInfo, error) {
+func (c *ADTClientImpl) GetTransaction(ctx context.Context, transactionName string) (*types.ADTTransactionInfo, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -869,10 +614,10 @@ func (c *ADTClientImpl) GetTransaction(transactionName string) (*types.ADTTransa
 
 	queryURL := fmt.Sprintf("%s%s?uri=%s&facet=package&facet=appl",
 		c.baseURL,
-		ADT_TRANSACTION_ENDPOINT,
+		transactionEndpoint,
 		url.QueryEscape(fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/trant/object_name/%s", encodedTransactionName)))
 
-	req, err := http.NewRequest("GET", queryURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", queryURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -880,7 +625,7 @@ func (c *ADTClientImpl) GetTransaction(transactionName string) (*types.ADTTransa
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "application/xml")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -889,7 +634,7 @@ func (c *ADTClientImpl) GetTransaction(transactionName string) (*types.ADTTransa
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("transaction %s not found (404)", transactionName)
+			return nil, fmt.Errorf("%w: transaction %s", ErrNotFound, transactionName)
 		}
 		return nil, fmt.Errorf("failed to get transaction %s: HTTP %d - %s", transactionName, resp.StatusCode, string(body))
 	}
@@ -916,7 +661,7 @@ func (c *ADTClientImpl) GetTransaction(transactionName string) (*types.ADTTransa
 	return result, nil
 }
 
-func (c *ADTClientImpl) GetTableContents(tableName string, maxRows int) (*types.ADTTableData, error) {
+func (c *ADTClientImpl) GetTableContents(ctx context.Context, tableName string, maxRows int) (*types.ADTTableData, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -931,9 +676,9 @@ func (c *ADTClientImpl) GetTableContents(tableName string, maxRows int) (*types.
 	}
 
 	// This requires a custom SAP service to be implemented
-	url := fmt.Sprintf("%s"+ADT_TABLE_CONTENTS_ENDPOINT+"?maxRows=%d", c.baseURL, tableName, maxRows)
+	url := fmt.Sprintf("%s"+tableContentsEndpoint+"?maxRows=%d", c.baseURL, tableName, maxRows)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -941,7 +686,7 @@ func (c *ADTClientImpl) GetTableContents(tableName string, maxRows int) (*types.
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -950,7 +695,7 @@ func (c *ADTClientImpl) GetTableContents(tableName string, maxRows int) (*types.
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("table contents service not found - requires custom SAP service implementation at %s", ADT_TABLE_CONTENTS_ENDPOINT)
+			return nil, fmt.Errorf("table contents service not found - requires custom SAP service implementation at %s", tableContentsEndpoint)
 		}
 		return nil, fmt.Errorf("failed to get table contents: HTTP %d - %s", resp.StatusCode, string(body))
 	}
@@ -972,7 +717,7 @@ func (c *ADTClientImpl) GetTableContents(tableName string, maxRows int) (*types.
 	return &result, nil
 }
 
-func (c *ADTClientImpl) GetTransports() ([]types.ADTTransport, error) {
+func (c *ADTClientImpl) GetTransports(ctx context.Context) ([]types.ADTTransport, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -985,7 +730,7 @@ func (c *ADTClientImpl) GetTransports() ([]types.ADTTransport, error) {
 }
 
 // CreateClass creates a new ABAP class - enhanced with working atomic approach
-func (c *ADTClientImpl) CreateClass(name, description, packageName, source string) error {
+func (c *ADTClientImpl) CreateClass(ctx context.Context, name, description, packageName, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -1010,7 +755,7 @@ func (c *ADTClientImpl) CreateClass(name, description, packageName, source strin
 		zap.String("package", packageName),
 		zap.Bool("has_source", source != ""))
 
-	if err := c.CreateClassWithSource(name, description, packageName, source); err != nil {
+	if err := c.CreateClassWithSource(ctx, name, description, packageName, source); err != nil {
 		return fmt.Errorf("failed to create class: %w", err)
 	}
 
@@ -1019,7 +764,7 @@ func (c *ADTClientImpl) CreateClass(name, description, packageName, source strin
 }
 
 // CreateClassWithSource is a convenience method that creates a class with source code
-func (c *ADTClientImpl) CreateClassWithSource(name, description, packageName, source string) error {
+func (c *ADTClientImpl) CreateClassWithSource(ctx context.Context, name, description, packageName, source string) error {
 	opts := CreateClassOptions{
 		Name:         name,
 		Description:  description,
@@ -1033,11 +778,11 @@ func (c *ADTClientImpl) CreateClassWithSource(name, description, packageName, so
 		opts.Package = "$TMP"
 	}
 
-	return c.CreateClassWithOptions(opts)
+	return c.CreateClassWithOptions(ctx, opts)
 }
 
 // CreateClassWithOptions creates a class with full options support
-func (c *ADTClientImpl) CreateClassWithOptions(opts CreateClassOptions) error {
+func (c *ADTClientImpl) CreateClassWithOptions(ctx context.Context, opts CreateClassOptions) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -1066,20 +811,20 @@ func (c *ADTClientImpl) CreateClassWithOptions(opts CreateClassOptions) error {
 		zap.Bool("has_source", opts.Source != ""))
 
 	// Step 1: Create the class structure
-	if err := c.createClassMetadata(opts.Name, opts.Description, opts.Package); err != nil {
+	if err := c.createClassMetadata(ctx, opts.Name, opts.Description, opts.Package); err != nil {
 		return fmt.Errorf("failed to create class structure: %w", err)
 	}
 
 	// Step 2: Insert source code if provided
 	if opts.InsertSource && opts.Source != "" && strings.TrimSpace(opts.Source) != "" {
-		if err := c.insertClassSource(&opts); err != nil {
+		if err := c.setClassSource(ctx, opts.Name, opts.Source); err != nil {
 			return fmt.Errorf("failed to insert source code: %w", err)
 		}
 	}
 
 	// Step 3: Activate if requested
 	if opts.Activate {
-		if err := c.activateClass(&opts); err != nil {
+		if err := c.activateClass(ctx, &opts); err != nil {
 			return fmt.Errorf("failed to activate class: %w", err)
 		}
 	}
@@ -1088,26 +833,43 @@ func (c *ADTClientImpl) CreateClassWithOptions(opts CreateClassOptions) error {
 	return nil
 }
 
+// classCreatePayload is the XML struct for class creation.
+type classCreatePayload struct {
+	XMLName     xml.Name           `xml:"class:abapClass"`
+	ClassNS     string             `xml:"xmlns:class,attr"`
+	AdtcoreNS   string             `xml:"xmlns:adtcore,attr"`
+	Description string             `xml:"adtcore:description,attr"`
+	Name        string             `xml:"adtcore:name,attr"`
+	Type        string             `xml:"adtcore:type,attr"`
+	Responsible string             `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef    `xml:"adtcore:packageRef"`
+}
+
+type classPackageRef struct {
+	Name string `xml:"adtcore:name,attr"`
+}
+
 // createClassMetadata creates the class metadata structure (no source)
-func (c *ADTClientImpl) createClassMetadata(name, description, packageName string) error {
-	// Prepare XML payload for class creation - following proper class creation pattern
-	xmlPayload := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<class:abapClass xmlns:class="http://www.sap.com/adt/oo/classes"
-                 xmlns:adtcore="http://www.sap.com/adt/core"
-                 adtcore:description="%s"
-                 adtcore:name="%s"
-                 adtcore:type="CLAS/OC"
-                 adtcore:responsible="%s">
-  <adtcore:packageRef adtcore:name="%s"/>
-</class:abapClass>`,
-		escapeXML(description),
-		name,
-		strings.ToUpper(strings.TrimSpace(c.config.Username)),
-		packageName)
+func (c *ADTClientImpl) createClassMetadata(ctx context.Context, name, description, packageName string) error {
+	payload := classCreatePayload{
+		ClassNS:     "http://www.sap.com/adt/oo/classes",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "CLAS/OC",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: packageName},
+	}
 
-	url := c.baseURL + ADT_CLASSES_CREATE_ENDPOINT
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal class metadata: %w", err)
+	}
+	xmlPayload := xml.Header + string(xmlBytes)
 
-	req, err := http.NewRequest("POST", url, strings.NewReader(xmlPayload))
+	url := c.baseURL + classesCreateEndpoint
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(xmlPayload)))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -1115,7 +877,7 @@ func (c *ADTClientImpl) createClassMetadata(name, description, packageName strin
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/*")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -1130,177 +892,8 @@ func (c *ADTClientImpl) createClassMetadata(name, description, packageName strin
 	return nil
 }
 
-// insertClassSource inserts source code into a class using the atomic pattern
-func (c *ADTClientImpl) insertClassSource(opts *CreateClassOptions) error {
-	c.logger.Info("Inserting source code", zap.String("class", opts.Name))
-
-	// Step 1: Lock the class
-	lockHandle, corrNr, err := c.lockClass(opts.Name)
-	if err != nil {
-		return fmt.Errorf("failed to lock class: %w", err)
-	}
-
-	c.logger.Debug("Class locked successfully",
-		zap.String("class", opts.Name),
-		zap.String("lock_handle", lockHandle),
-		zap.String("corr_nr", corrNr))
-
-	// Step 2: Update the source code
-	if err := c.updateClassSource(opts.Name, opts.Source, lockHandle, corrNr); err != nil {
-		// Try to unlock on error
-		c.unlockClass(opts.Name, lockHandle)
-		return fmt.Errorf("failed to update source: %w", err)
-	}
-
-	// Step 3: Unlock the class
-	if err := c.unlockClass(opts.Name, lockHandle); err != nil {
-		c.logger.Warn("Failed to unlock class", zap.String("class", opts.Name), zap.Error(err))
-		// Don't fail the whole operation for unlock issues
-	}
-
-	return nil
-}
-
-// lockClass locks a class for editing with fixed case handling
-func (c *ADTClientImpl) lockClass(className string) (lockHandle, corrNr string, err error) {
-	// Keep class name in UPPERCASE for ABAP objects
-	className = strings.ToUpper(strings.TrimSpace(className))
-	// Use lowercase only for URL path
-	classNameLower := strings.ToLower(className)
-
-	// Use the correct lock URL format for classes
-	url := fmt.Sprintf("%s/oo/classes/%s?_action=LOCK&accessMode=MODIFY", c.baseURL, classNameLower)
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create lock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("Content-Length", "0")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("lock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read lock response: %w", err)
-	}
-
-	c.logger.Debug("Lock response", zap.String("class", className), zap.String("body", string(responseBody)))
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("lock failed: HTTP %d - %s", resp.StatusCode, string(responseBody))
-	}
-
-	// Parse the lock response using the working pattern from reference API
-	var lockResp LockResponse
-	if err := xml.Unmarshal(responseBody, &lockResp); err != nil {
-		c.logger.Debug("Failed to parse standard lock response, trying objectReferences format", zap.Error(err))
-
-		// Try alternative format
-		var objRefsResp ObjectRefsLockResponse
-		if err := xml.Unmarshal(responseBody, &objRefsResp); err != nil {
-			return "", "", fmt.Errorf("failed to parse lock response in both formats: %w", err)
-		}
-
-		c.logger.Debug("Successfully parsed objectReferences lock response",
-			zap.String("class", className),
-			zap.String("lock_handle", objRefsResp.ObjectRef.LockHandle),
-			zap.String("corr_nr", objRefsResp.ObjectRef.CorrNr))
-
-		return objRefsResp.ObjectRef.LockHandle, objRefsResp.ObjectRef.CorrNr, nil
-	}
-
-	c.logger.Debug("Successfully parsed standard lock response",
-		zap.String("class", className),
-		zap.String("lock_handle", lockResp.Values.Data.LockHandle),
-		zap.String("corr_nr", lockResp.Values.Data.CorrNr))
-
-	return lockResp.Values.Data.LockHandle, lockResp.Values.Data.CorrNr, nil
-}
-
-// updateClassSource updates the source code for a class
-func (c *ADTClientImpl) updateClassSource(className, source, lockHandle, corrNr string) error {
-	className = strings.ToUpper(strings.TrimSpace(className))
-	classNameLower := strings.ToLower(className)
-
-	// Use the exact working URL pattern for class source update
-	url := fmt.Sprintf("%s/oo/classes/%s/source/main?lockHandle=%s&corrNr=%s",
-		c.baseURL, classNameLower, lockHandle, corrNr)
-
-	req, err := http.NewRequest("PUT", url, strings.NewReader(source))
-	if err != nil {
-		return fmt.Errorf("failed to create source update request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("source update request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("source update failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	c.logger.Debug("Source updated successfully", zap.String("class", className))
-	return nil
-}
-
-// unlockClass unlocks a class with fixed case handling
-func (c *ADTClientImpl) unlockClass(className, lockHandle string) error {
-	// Keep class name consistent with lock operation
-	className = strings.ToUpper(strings.TrimSpace(className))
-	classNameLower := strings.ToLower(className)
-
-	url := fmt.Sprintf("%s/oo/classes/%s?_action=UNLOCK&lockHandle=%s", c.baseURL, classNameLower, lockHandle)
-
-	c.logger.Debug("Unlocking class",
-		zap.String("class", className),
-		zap.String("lock_handle", lockHandle),
-		zap.String("url", url))
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create unlock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("Content-Length", "0")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("unlock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		// Log but don't fail - unlock issues shouldn't break the main operation
-		c.logger.Warn("Unlock may have failed",
-			zap.String("class", className),
-			zap.Int("status", resp.StatusCode),
-			zap.String("response", string(body)))
-		return fmt.Errorf("unlock failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	c.logger.Debug("Class unlocked successfully", zap.String("class", className))
-	return nil
-}
-
 // activateClass activates a class
-func (c *ADTClientImpl) activateClass(opts *CreateClassOptions) error {
+func (c *ADTClientImpl) activateClass(ctx context.Context, opts *CreateClassOptions) error {
 	c.logger.Info("Activating class", zap.String("class", opts.Name))
 
 	// Prepare activation request
@@ -1322,7 +915,7 @@ func (c *ADTClientImpl) activateClass(opts *CreateClassOptions) error {
 
 	url := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
-	req, err := http.NewRequest("POST", url, strings.NewReader(fullPayload))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(fullPayload))
 	if err != nil {
 		return fmt.Errorf("failed to create activation request: %w", err)
 	}
@@ -1332,7 +925,7 @@ func (c *ADTClientImpl) activateClass(opts *CreateClassOptions) error {
 	req.Header.Set("Accept", "application/*")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("activation request failed: %w", err)
 	}
@@ -1356,27 +949,27 @@ func (c *ADTClientImpl) activateClass(opts *CreateClassOptions) error {
 }
 
 // CreateInterface creates a new ABAP interface
-func (c *ADTClientImpl) CreateInterface(name, description, source string) error {
+func (c *ADTClientImpl) CreateInterface(ctx context.Context, name, description, source string) error {
 	return fmt.Errorf("not implemented")
 }
 
 // CreateFunctionGroup creates a new ABAP function group
-func (c *ADTClientImpl) CreateFunctionGroup(name, description, source string) error {
+func (c *ADTClientImpl) CreateFunctionGroup(ctx context.Context, name, description, source string) error {
 	return fmt.Errorf("not implemented")
 }
 
 // CreateInclude creates a new ABAP include
-func (c *ADTClientImpl) CreateInclude(name, description, source string) error {
+func (c *ADTClientImpl) CreateInclude(ctx context.Context, name, description, source string) error {
 	return fmt.Errorf("not implemented")
 }
 
 // CreateStructure creates a new ABAP structure
-func (c *ADTClientImpl) CreateStructure(name, description, source string) error {
+func (c *ADTClientImpl) CreateStructure(ctx context.Context, name, description, source string) error {
 	return fmt.Errorf("not implemented")
 }
 
 // CreateTable creates a new ABAP table
-func (c *ADTClientImpl) CreateTable(name, description, source string) error {
+func (c *ADTClientImpl) CreateTable(ctx context.Context, name, description, source string) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -1408,6 +1001,55 @@ func (c *ADTClientImpl) addAuthHeaders(req *http.Request) {
 	req.Header.Set("User-Agent", "abaper/1.0")
 }
 
+// doRequest executes req, transparently re-authenticating on session expiry.
+// On 401: re-authenticates and retries once. On 403 with X-CSRF-Token prompt: refreshes token and retries.
+// The request body (if any) is buffered so it can be replayed on retry.
+func (c *ADTClientImpl) doRequest(req *http.Request) (*http.Response, error) {
+	var bodyBytes []byte
+	if req.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read request body: %w", err)
+		}
+		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		resp.Body.Close()
+		c.logger.Info("Session expired (401), re-authenticating")
+		if authErr := c.Authenticate(); authErr != nil {
+			return nil, fmt.Errorf("re-auth failed: %w", authErr)
+		}
+		c.addAuthHeaders(req)
+		if bodyBytes != nil {
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+		return c.httpClient.Do(req)
+
+	case http.StatusForbidden:
+		if req.Header.Get("X-CSRF-Token") != "" {
+			resp.Body.Close()
+			c.logger.Info("CSRF token expired (403), refreshing")
+			if csrfErr := c.getCSRFToken(); csrfErr != nil {
+				return nil, fmt.Errorf("CSRF refresh failed: %w", csrfErr)
+			}
+			c.addAuthHeaders(req)
+			if bodyBytes != nil {
+				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			}
+			return c.httpClient.Do(req)
+		}
+	}
+	return resp, nil
+}
+
 // testConnectivity tests basic network connectivity to the SAP system
 func (c *ADTClientImpl) testConnectivity() error {
 	c.logger.Info("Testing basic connectivity", zap.String("host", c.config.Host))
@@ -1420,7 +1062,7 @@ func (c *ADTClientImpl) testConnectivity() error {
 
 	// Set a shorter timeout for connectivity test
 	client := &http.Client{
-		Timeout:   time.Duration(c.config.ConnectTimeout) * time.Second,
+		Timeout:   c.config.ConnectTimeout,
 		Transport: c.httpClient.Transport,
 	}
 
@@ -1543,8 +1185,8 @@ func (c *ADTClientImpl) validateSession() error {
 }
 
 // getTypeSource retrieves source for type definitions
-func (c *ADTClientImpl) getTypeSource(url, acceptType string) (string, error) {
-	req, err := http.NewRequest("GET", url, nil)
+func (c *ADTClientImpl) getTypeSource(ctx context.Context, url, acceptType string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -1552,7 +1194,7 @@ func (c *ADTClientImpl) getTypeSource(url, acceptType string) (string, error) {
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", acceptType)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -1631,7 +1273,7 @@ type ActivationRef struct {
 }
 
 // CreateProgram creates a new ABAP program - now with working atomic approach
-func (c *ADTClientImpl) CreateProgram(name, description, packageName, source string) error {
+func (c *ADTClientImpl) CreateProgram(ctx context.Context, name, description, packageName, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -1650,7 +1292,7 @@ func (c *ADTClientImpl) CreateProgram(name, description, packageName, source str
 		zap.String("description", description),
 		zap.Bool("has_source", source != ""))
 
-	if err := c.CreateProgramWithSource(name, description, packageName, source); err != nil {
+	if err := c.CreateProgramWithSource(ctx, name, description, packageName, source); err != nil {
 		return fmt.Errorf("failed to create program: %w", err)
 	}
 
@@ -1709,26 +1351,43 @@ func (c *ADTClientImpl) parseLockResponse(responseBody []byte) (lockHandle, corr
 	return "", "", fmt.Errorf("failed to parse lock response in any known format. Response: %s", string(responseBody))
 }
 
+// programCreatePayload is the XML struct for program creation.
+type programCreatePayload struct {
+	XMLName     xml.Name           `xml:"program:abapProgram"`
+	ProgramNS   string             `xml:"xmlns:program,attr"`
+	AdtcoreNS   string             `xml:"xmlns:adtcore,attr"`
+	Description string             `xml:"adtcore:description,attr"`
+	Name        string             `xml:"adtcore:name,attr"`
+	Type        string             `xml:"adtcore:type,attr"`
+	Responsible string             `xml:"adtcore:responsible,attr"`
+	PackageRef  programPackageRef  `xml:"adtcore:packageRef"`
+}
+
+type programPackageRef struct {
+	Name string `xml:"adtcore:name,attr"`
+}
+
 // createProgramMetadata creates the program metadata structure (no source)
-func (c *ADTClientImpl) createProgramMetadata(name, description, packageName string) error {
-	// Prepare XML payload for program creation
-	xmlPayload := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<program:abapProgram xmlns:program="http://www.sap.com/adt/programs/programs"
-                     xmlns:adtcore="http://www.sap.com/adt/core"
-                     adtcore:description="%s"
-                     adtcore:name="%s"
-                     adtcore:type="PROG/P"
-                     adtcore:responsible="%s">
-  <adtcore:packageRef adtcore:name="%s"/>
-</program:abapProgram>`,
-		escapeXML(description),
-		name,
-		strings.ToUpper(strings.TrimSpace(c.config.Username)),
-		packageName)
+func (c *ADTClientImpl) createProgramMetadata(ctx context.Context, name, description, packageName string) error {
+	payload := programCreatePayload{
+		ProgramNS:   "http://www.sap.com/adt/programs/programs",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "PROG/P",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  programPackageRef{Name: packageName},
+	}
 
-	url := c.baseURL + ADT_PROGRAMS_CREATE_ENDPOINT
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal program metadata: %w", err)
+	}
+	xmlPayload := xml.Header + string(xmlBytes)
 
-	req, err := http.NewRequest("POST", url, strings.NewReader(xmlPayload))
+	url := c.baseURL + programsCreateEndpoint
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(xmlPayload)))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -1736,7 +1395,7 @@ func (c *ADTClientImpl) createProgramMetadata(name, description, packageName str
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/*")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
@@ -1750,31 +1409,8 @@ func (c *ADTClientImpl) createProgramMetadata(name, description, packageName str
 	return nil
 }
 
-// createProgramWithSource creates a program and optionally sets source code atomically
-func (c *ADTClientImpl) createProgramWithSource(name, description, packageName, source string) error {
-	c.logger.Info("Creating program with source atomically", zap.String("name", name), zap.Bool("has_source", source != ""))
-
-	// Step 1: Create the program structure
-	if err := c.createProgramMetadata(name, description, packageName); err != nil {
-		return fmt.Errorf("failed to create program metadata: %w", err)
-	}
-	c.logger.Info("Program metadata created", zap.String("name", name))
-
-	// Step 2: If source provided, set it immediately using the working pattern from reference API
-	if source != "" && strings.TrimSpace(source) != "" {
-		// Use the pattern that works: lock the program object and set source on source path
-		if err := c.setSourceUsingWorkingPattern(name, source); err != nil {
-			// If source setting fails, we could try to clean up the created program, but for now just return error
-			return fmt.Errorf("program created but failed to set source: %w", err)
-		}
-		c.logger.Info("Program source set successfully", zap.String("name", name))
-	}
-
-	return nil
-}
-
 // setSourceUsingWorkingPattern uses the exact pattern from reference API that works
-func (c *ADTClientImpl) setSourceUsingWorkingPattern(programName, source string) error {
+func (c *ADTClientImpl) setSourceUsingWorkingPattern(ctx context.Context, programName, source string) error {
 	c.logger.Info("Setting source using working pattern", zap.String("program", programName))
 
 	// Ensure we're in stateful mode from the start
@@ -1792,57 +1428,20 @@ func (c *ADTClientImpl) setSourceUsingWorkingPattern(programName, source string)
 	c.logger.Debug("Using paths", zap.String("program_path", programPath), zap.String("source_path", sourcePath))
 
 	// Lock the program object (not the source path)
-	lockHandle, corrNr, err := c.lockObject(programPath)
+	lockHandle, corrNr, err := c.lockObject(ctx, programPath)
 	if err != nil {
 		return fmt.Errorf("failed to lock program: %w", err)
 	}
 
 	// Ensure we unlock
 	defer func() {
-		if unlockErr := c.unlockObject(programPath, lockHandle); unlockErr != nil {
+		if unlockErr := c.unlockObject(ctx, programPath, lockHandle); unlockErr != nil {
 			c.logger.Warn("Failed to unlock program", zap.String("program", programName), zap.Error(unlockErr))
 		}
 	}()
 
 	// Set the source on the source path using lock handle from program
-	if err := c.setObjectSource(sourcePath, source, lockHandle, corrNr); err != nil {
-		return fmt.Errorf("failed to set source: %w", err)
-	}
-
-	return nil
-}
-
-// setProgramSource sets the program source code using proper lock/unlock pattern
-func (c *ADTClientImpl) setProgramSource(programName, source string) error {
-	c.logger.Info("Setting program source code", zap.String("program", programName))
-
-	// Ensure stateful session for locking
-	originalSessionType := c.sessionType
-	c.sessionType = string(types.SessionStateful)
-	defer func() {
-		// Restore original session type
-		c.sessionType = originalSessionType
-	}()
-
-	// Construct object path (baseURL already includes /sap/bc/adt)
-	programNameLower := strings.ToLower(programName)
-	sourcePath := fmt.Sprintf("/programs/programs/%s/source/main", programNameLower)
-
-	// Try locking the source path directly since the error mentions INCLUDE
-	lockHandle, corrNr, err := c.lockObject(sourcePath)
-	if err != nil {
-		return fmt.Errorf("failed to lock program: %w", err)
-	}
-
-	// Ensure we unlock on exit (use same path we locked)
-	defer func() {
-		if unlockErr := c.unlockObject(sourcePath, lockHandle); unlockErr != nil {
-			c.logger.Warn("Failed to unlock program", zap.String("program", programName), zap.Error(unlockErr))
-		}
-	}()
-
-	// Set the source code
-	if err := c.setObjectSource(sourcePath, source, lockHandle, corrNr); err != nil {
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to set source: %w", err)
 	}
 
@@ -1850,10 +1449,10 @@ func (c *ADTClientImpl) setProgramSource(programName, source string) error {
 }
 
 // lockObject locks an object for modification (following reference API pattern)
-func (c *ADTClientImpl) lockObject(objectPath string) (lockHandle, corrNr string, err error) {
+func (c *ADTClientImpl) lockObject(ctx context.Context, objectPath string) (lockHandle, corrNr string, err error) {
 	url := fmt.Sprintf("%s%s?_action=LOCK&accessMode=MODIFY", c.baseURL, objectPath)
 
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create lock request: %w", err)
 	}
@@ -1864,7 +1463,7 @@ func (c *ADTClientImpl) lockObject(objectPath string) (lockHandle, corrNr string
 
 	c.logger.Debug("Locking object", zap.String("object_path", objectPath), zap.String("url", url))
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return "", "", fmt.Errorf("lock request failed: %w", err)
 	}
@@ -1899,12 +1498,12 @@ func (c *ADTClientImpl) lockObject(objectPath string) (lockHandle, corrNr string
 }
 
 // unlockObject unlocks an object (following reference API pattern)
-func (c *ADTClientImpl) unlockObject(objectPath, lockHandle string) error {
+func (c *ADTClientImpl) unlockObject(ctx context.Context, objectPath, lockHandle string) error {
 	url := fmt.Sprintf("%s%s?_action=UNLOCK&lockHandle=%s", c.baseURL, objectPath, lockHandle)
 
 	c.logger.Debug("Unlocking object", zap.String("object_path", objectPath), zap.String("lock_handle", lockHandle), zap.String("url", url))
 
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create unlock request: %w", err)
 	}
@@ -1913,7 +1512,7 @@ func (c *ADTClientImpl) unlockObject(objectPath, lockHandle string) error {
 	req.Header.Set("Accept", "application/*")
 	req.Header.Set("Content-Length", "0")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("unlock request failed: %w", err)
 	}
@@ -1930,7 +1529,7 @@ func (c *ADTClientImpl) unlockObject(objectPath, lockHandle string) error {
 }
 
 // setObjectSource sets the source code for an object (following reference API pattern)
-func (c *ADTClientImpl) setObjectSource(sourcePath, source, lockHandle, corrNr string) error {
+func (c *ADTClientImpl) setObjectSource(ctx context.Context, sourcePath, source, lockHandle, corrNr string) error {
 	url := fmt.Sprintf("%s%s?lockHandle=%s", c.baseURL, sourcePath, lockHandle)
 	if corrNr != "" {
 		url += "&corrNr=" + corrNr
@@ -1938,7 +1537,7 @@ func (c *ADTClientImpl) setObjectSource(sourcePath, source, lockHandle, corrNr s
 
 	c.logger.Debug("Setting object source", zap.String("source_path", sourcePath), zap.String("lock_handle", lockHandle), zap.String("url", url), zap.Int("source_length", len(source)))
 
-	req, err := http.NewRequest("PUT", url, strings.NewReader(source))
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, strings.NewReader(source))
 	if err != nil {
 		return fmt.Errorf("failed to create source update request: %w", err)
 	}
@@ -1952,7 +1551,7 @@ func (c *ADTClientImpl) setObjectSource(sourcePath, source, lockHandle, corrNr s
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "text/plain")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("source update request failed: %w", err)
 	}
@@ -1969,7 +1568,7 @@ func (c *ADTClientImpl) setObjectSource(sourcePath, source, lockHandle, corrNr s
 }
 
 // GetObjectSource retrieves the source code of an object (following reference API pattern)
-func (c *ADTClientImpl) GetObjectSource(objectType, objectName string) (string, error) {
+func (c *ADTClientImpl) GetObjectSource(ctx context.Context, objectType, objectName string) (string, error) {
 	if !c.IsAuthenticated() {
 		return "", fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -1996,7 +1595,7 @@ func (c *ADTClientImpl) GetObjectSource(objectType, objectName string) (string, 
 
 	url := c.baseURL + sourcePath
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -2004,14 +1603,14 @@ func (c *ADTClientImpl) GetObjectSource(objectType, objectName string) (string, 
 	c.addAuthHeaders(req)
 	req.Header.Set("Accept", "text/plain")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return "", fmt.Errorf("object %s %s not found", objectType, objectName)
+		return "", fmt.Errorf("%w: %s %s", ErrNotFound, objectType, objectName)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -2029,16 +1628,15 @@ func (c *ADTClientImpl) GetObjectSource(objectType, objectName string) (string, 
 }
 
 // CheckObjectExists checks if an object exists (using GetObjectSource internally)
-func (c *ADTClientImpl) CheckObjectExists(objectType, objectName string) (bool, error) {
+func (c *ADTClientImpl) CheckObjectExists(ctx context.Context, objectType, objectName string) (bool, error) {
 	c.logger.Debug("Checking object existence", zap.String("object_type", objectType), zap.String("object_name", objectName))
 
-	_, err := c.GetObjectSource(objectType, objectName)
+	_, err := c.GetObjectSource(ctx, objectType, objectName)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrNotFound) {
 			c.logger.Debug("Object does not exist", zap.String("object_type", objectType), zap.String("object_name", objectName))
 			return false, nil
 		}
-		// Some other error occurred
 		return false, err
 	}
 
@@ -2047,7 +1645,7 @@ func (c *ADTClientImpl) CheckObjectExists(objectType, objectName string) (bool, 
 }
 
 // setClassSource sets the source code for a class (following similar pattern to programs)
-func (c *ADTClientImpl) setClassSource(className, source string) error {
+func (c *ADTClientImpl) setClassSource(ctx context.Context, className, source string) error {
 	// Ensure stateful session
 	originalSessionType := c.sessionType
 	c.sessionType = string(types.SessionStateful)
@@ -2060,286 +1658,27 @@ func (c *ADTClientImpl) setClassSource(className, source string) error {
 	sourcePath := fmt.Sprintf("/oo/classes/%s/source/main", classNameLower)
 
 	// Lock the class object
-	lockHandle, corrNr, err := c.lockObject(classPath)
+	lockHandle, corrNr, err := c.lockObject(ctx, classPath)
 	if err != nil {
 		return fmt.Errorf("failed to lock class: %w", err)
 	}
 
 	defer func() {
-		if unlockErr := c.unlockObject(classPath, lockHandle); unlockErr != nil {
+		if unlockErr := c.unlockObject(ctx, classPath, lockHandle); unlockErr != nil {
 			c.logger.Warn("Failed to unlock class", zap.String("class", className), zap.Error(unlockErr))
 		}
 	}()
 
 	// Set the source
-	if err := c.setObjectSource(sourcePath, source, lockHandle, corrNr); err != nil {
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to set source: %w", err)
 	}
-
-	return nil
-}
-
-// setIncludeSource sets the source code for an include
-func (c *ADTClientImpl) setIncludeSource(includeName, source string) error {
-	// Ensure stateful session
-	originalSessionType := c.sessionType
-	c.sessionType = string(types.SessionStateful)
-	defer func() {
-		c.sessionType = originalSessionType
-	}()
-
-	includeNameLower := strings.ToLower(includeName)
-	includePath := fmt.Sprintf("/programs/includes/%s", includeNameLower)
-	sourcePath := fmt.Sprintf("/programs/includes/%s/source/main", includeNameLower)
-
-	// Lock the include object
-	lockHandle, corrNr, err := c.lockObject(includePath)
-	if err != nil {
-		return fmt.Errorf("failed to lock include: %w", err)
-	}
-
-	defer func() {
-		if unlockErr := c.unlockObject(includePath, lockHandle); unlockErr != nil {
-			c.logger.Warn("Failed to unlock include", zap.String("include", includeName), zap.Error(unlockErr))
-		}
-	}()
-
-	// Set the source
-	if err := c.setObjectSource(sourcePath, source, lockHandle, corrNr); err != nil {
-		return fmt.Errorf("failed to set source: %w", err)
-	}
-
-	return nil
-}
-
-// setInterfaceSource sets the source code for an interface
-func (c *ADTClientImpl) setInterfaceSource(interfaceName, source string) error {
-	// Ensure stateful session
-	originalSessionType := c.sessionType
-	c.sessionType = string(types.SessionStateful)
-	defer func() {
-		c.sessionType = originalSessionType
-	}()
-
-	interfaceNameLower := strings.ToLower(interfaceName)
-	interfacePath := fmt.Sprintf("/oo/interfaces/%s", interfaceNameLower)
-	sourcePath := fmt.Sprintf("/oo/interfaces/%s/source/main", interfaceNameLower)
-
-	// Lock the interface object
-	lockHandle, corrNr, err := c.lockObject(interfacePath)
-	if err != nil {
-		return fmt.Errorf("failed to lock interface: %w", err)
-	}
-
-	defer func() {
-		if unlockErr := c.unlockObject(interfacePath, lockHandle); unlockErr != nil {
-			c.logger.Warn("Failed to unlock interface", zap.String("interface", interfaceName), zap.Error(unlockErr))
-		}
-	}()
-
-	// Set the source
-	if err := c.setObjectSource(sourcePath, source, lockHandle, corrNr); err != nil {
-		return fmt.Errorf("failed to set source: %w", err)
-	}
-
-	return nil
-}
-
-// insertProgramSource inserts source code into the program - DEPRECATED: use setProgramSource
-func (c *ADTClientImpl) insertProgramSource(opts *CreateProgramOptions) error {
-	c.logger.Info("Inserting source code", zap.String("program", opts.Name))
-
-	// Step 1: Lock the program
-	lockHandle, corrNr, err := c.lockProgram(opts.Name)
-	if err != nil {
-		return fmt.Errorf("failed to lock program: %w", err)
-	}
-
-	c.logger.Debug("Program locked successfully",
-		zap.String("program", opts.Name),
-		zap.String("lock_handle", lockHandle),
-		zap.String("transport", corrNr))
-
-	// Step 2: Insert source code
-	if err := c.updateProgramSource(opts.Name, opts.Source, lockHandle, corrNr); err != nil {
-		// Try to unlock on error
-		c.unlockProgram(opts.Name, lockHandle)
-		return fmt.Errorf("failed to update source: %w", err)
-	}
-
-	// Step 3: Unlock the program
-	if err := c.unlockProgram(opts.Name, lockHandle); err != nil {
-		c.logger.Warn("Failed to unlock program", zap.String("program", opts.Name), zap.Error(err))
-		// Don't fail the whole operation for unlock issues
-	}
-
-	return nil
-}
-
-// lockProgram locks a program for editing with fixed case handling
-func (c *ADTClientImpl) lockProgram(programName string) (lockHandle, corrNr string, err error) {
-	// CRITICAL FIX: Keep program name in UPPERCASE for ABAP objects
-	programName = strings.ToUpper(strings.TrimSpace(programName))
-	// Use lowercase only for URL path, but uppercase for lock parameters
-	programNameLower := strings.ToLower(programName)
-
-	// CRITICAL FIX: Use the correct lock URL format for programs
-	url := fmt.Sprintf("%s/programs/programs/%s?_action=LOCK&accessMode=MODIFY", c.baseURL, programNameLower)
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to create lock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-	// CRITICAL FIX: Add Content-Length for empty body
-	req.Header.Set("Content-Length", "0")
-
-	c.logger.Debug("Locking program",
-		zap.String("program_name", programName),
-		zap.String("url", url))
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("lock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("Lock failed",
-			zap.String("program", programName),
-			zap.Int("status", resp.StatusCode),
-			zap.String("response", string(body)))
-		return "", "", fmt.Errorf("lock failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	// Read response body
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to read lock response: %w", err)
-	}
-
-	c.logger.Debug("Lock response received",
-		zap.String("program", programName),
-		zap.String("response_body", string(responseBody)))
-
-	// Parse lock response using flexible parser
-	lockHandle, corrNr, err = c.parseLockResponse(responseBody)
-	if err != nil {
-		return "", "", err
-	}
-
-	if lockHandle == "" {
-		return "", "", fmt.Errorf("no lock handle received in response")
-	}
-
-	c.logger.Info("Program locked successfully",
-		zap.String("program", programName),
-		zap.String("lock_handle", lockHandle),
-		zap.String("corr_nr", corrNr))
-
-	return lockHandle, corrNr, nil
-}
-
-// updateProgramSource updates the program source code with fixed case handling
-func (c *ADTClientImpl) updateProgramSource(programName, source, lockHandle, corrNr string) error {
-	// CRITICAL FIX: Keep program name consistent with lock operation
-	programName = strings.ToUpper(strings.TrimSpace(programName))
-	programNameLower := strings.ToLower(programName)
-
-	url := fmt.Sprintf("%s/programs/programs/%s/source/main?lockHandle=%s", c.baseURL, programNameLower, lockHandle)
-
-	if corrNr != "" {
-		url += "&corrNr=" + corrNr
-	}
-
-	c.logger.Debug("Updating program source",
-		zap.String("program", programName),
-		zap.String("lock_handle", lockHandle),
-		zap.String("url", url),
-		zap.Int("source_length", len(source)))
-
-	req, err := http.NewRequest("PUT", url, strings.NewReader(source))
-	if err != nil {
-		return fmt.Errorf("failed to create source update request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-	req.Header.Set("Accept", "text/plain")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("source update request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Error("Source update failed",
-			zap.String("program", programName),
-			zap.String("lock_handle", lockHandle),
-			zap.Int("status", resp.StatusCode),
-			zap.String("response", string(body)))
-		return fmt.Errorf("source update failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	c.logger.Info("Program source updated successfully",
-		zap.String("program", programName),
-		zap.String("lock_handle", lockHandle))
-
-	return nil
-}
-
-// unlockProgram unlocks a program with fixed case handling
-func (c *ADTClientImpl) unlockProgram(programName, lockHandle string) error {
-	// CRITICAL FIX: Keep program name consistent with lock operation
-	programName = strings.ToUpper(strings.TrimSpace(programName))
-	programNameLower := strings.ToLower(programName)
-
-	url := fmt.Sprintf("%s/programs/programs/%s?_action=UNLOCK&lockHandle=%s", c.baseURL, programNameLower, lockHandle)
-
-	c.logger.Debug("Unlocking program",
-		zap.String("program", programName),
-		zap.String("lock_handle", lockHandle),
-		zap.String("url", url))
-
-	req, err := http.NewRequest("POST", url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create unlock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("Content-Length", "0")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("unlock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		c.logger.Warn("Unlock failed",
-			zap.String("program", programName),
-			zap.String("lock_handle", lockHandle),
-			zap.Int("status", resp.StatusCode),
-			zap.String("response", string(body)))
-		return fmt.Errorf("unlock failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	c.logger.Info("Program unlocked successfully",
-		zap.String("program", programName),
-		zap.String("lock_handle", lockHandle))
 
 	return nil
 }
 
 // activateProgram activates the program
-func (c *ADTClientImpl) activateProgram(opts *CreateProgramOptions) error {
+func (c *ADTClientImpl) activateProgram(ctx context.Context, opts *CreateProgramOptions) error {
 	c.logger.Info("Activating program", zap.String("program", opts.Name))
 
 	// Prepare activation request
@@ -2361,7 +1700,7 @@ func (c *ADTClientImpl) activateProgram(opts *CreateProgramOptions) error {
 
 	url := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
-	req, err := http.NewRequest("POST", url, strings.NewReader(fullPayload))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(fullPayload))
 	if err != nil {
 		return fmt.Errorf("failed to create activation request: %w", err)
 	}
@@ -2371,7 +1710,7 @@ func (c *ADTClientImpl) activateProgram(opts *CreateProgramOptions) error {
 	req.Header.Set("Accept", "application/*")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("activation request failed: %w", err)
 	}
@@ -2389,8 +1728,6 @@ func (c *ADTClientImpl) activateProgram(opts *CreateProgramOptions) error {
 		return nil // Don't fail if we can't read the response
 	}
 
-	fmt.Println("responseBody", string(responseBody))
-
 	// Log activation response for debugging
 	c.logger.Debug("Activation response", zap.String("response", string(responseBody)))
 
@@ -2398,7 +1735,7 @@ func (c *ADTClientImpl) activateProgram(opts *CreateProgramOptions) error {
 }
 
 // Enhanced CreateProgram with options support
-func (c *ADTClientImpl) CreateProgramWithOptions(opts CreateProgramOptions) error {
+func (c *ADTClientImpl) CreateProgramWithOptions(ctx context.Context, opts CreateProgramOptions) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2426,20 +1763,20 @@ func (c *ADTClientImpl) CreateProgramWithOptions(opts CreateProgramOptions) erro
 		zap.Bool("activate", opts.Activate))
 
 	// Step 1: Create the program structure
-	if err := c.createProgramMetadata(opts.Name, opts.Description, opts.Package); err != nil {
+	if err := c.createProgramMetadata(ctx, opts.Name, opts.Description, opts.Package); err != nil {
 		return fmt.Errorf("failed to create program structure: %w", err)
 	}
 
 	// Step 2: Insert source code if provided
 	if opts.InsertSource && opts.Source != "" {
-		if err := c.insertProgramSource(&opts); err != nil {
+		if err := c.setSourceUsingWorkingPattern(ctx, opts.Name, opts.Source); err != nil {
 			return fmt.Errorf("failed to insert source code: %w", err)
 		}
 	}
 
 	// Step 3: Activate if requested
 	if opts.Activate {
-		if err := c.activateProgram(&opts); err != nil {
+		if err := c.activateProgram(ctx, &opts); err != nil {
 			return fmt.Errorf("failed to activate program: %w", err)
 		}
 	}
@@ -2459,7 +1796,7 @@ func escapeXML(s string) string {
 }
 
 // CreateProgramWithSource is a convenience method that creates a program with source code
-func (c *ADTClientImpl) CreateProgramWithSource(name, description, packageName, source string) error {
+func (c *ADTClientImpl) CreateProgramWithSource(ctx context.Context, name, description, packageName, source string) error {
 	opts := CreateProgramOptions{
 		Name:         name,
 		Description:  description,
@@ -2473,11 +1810,11 @@ func (c *ADTClientImpl) CreateProgramWithSource(name, description, packageName, 
 		opts.Package = "$TMP"
 	}
 
-	return c.CreateProgramWithOptions(opts)
+	return c.CreateProgramWithOptions(ctx, opts)
 }
 
 // UpdateProgram updates an existing ABAP program's source code
-func (c *ADTClientImpl) UpdateProgram(name, source string) error {
+func (c *ADTClientImpl) UpdateProgram(ctx context.Context, name, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2495,167 +1832,34 @@ func (c *ADTClientImpl) UpdateProgram(name, source string) error {
 		zap.String("name", name),
 		zap.Int("source_length", len(source)))
 
-	// Step 1: Lock the SOURCE/INCLUDE (not the program metadata)
-	sourceURL := fmt.Sprintf("%s/programs/programs/%s/source/main", c.baseURL, name)
-	lockHandle, err := c.lockSource(sourceURL)
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/programs/programs/%s", nameLower)
+	sourcePath := fmt.Sprintf("/programs/programs/%s/source/main", nameLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
 	if err != nil {
-		return fmt.Errorf("failed to lock program source: %w", err)
+		return fmt.Errorf("failed to lock program: %w", err)
 	}
 
-	c.logger.Info("Program source locked",
-		zap.String("program", name),
-		zap.String("lock_handle", lockHandle))
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock program",
+				zap.String("program", name),
+				zap.Error(unlockErr))
+		}
+	}()
 
-	// Step 2: Update the source code
-	err = c.updateSource(sourceURL, source, lockHandle)
-	if err != nil {
-		// Try to unlock even if update failed
-		c.unlockSource(sourceURL, lockHandle)
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to update program source: %w", err)
-	}
-
-	// Step 3: Unlock the source
-	err = c.unlockSource(sourceURL, lockHandle)
-	if err != nil {
-		c.logger.Warn("Failed to unlock program source",
-			zap.String("program", name),
-			zap.String("lock_handle", lockHandle),
-			zap.Error(err))
-		// Don't fail the operation if unlock fails
 	}
 
 	c.logger.Info("Program updated successfully", zap.String("name", name))
 	return nil
 }
 
-// lockSource locks a source object for modification
-func (c *ADTClientImpl) lockSource(sourceURL string) (string, error) {
-	lockURL := sourceURL + "?_action=LOCK&accessMode=MODIFY"
-
-	// Add client and language parameters
-	if c.config.Client != "" {
-		lockURL += "&sap-client=" + c.config.Client
-	}
-	if c.config.Language != "" {
-		lockURL += "&sap-language=" + c.config.Language
-	}
-
-	req, err := http.NewRequest("POST", lockURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create lock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("lock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read lock response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("lock failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	// Parse lock handle from XML response
-	lockHandle, _, err := c.parseLockResponse(body)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse lock response: %w", err)
-	}
-
-	if lockHandle == "" {
-		return "", fmt.Errorf("lock handle not found in response: %s", string(body))
-	}
-
-	return lockHandle, nil
-}
-
-// updateSource updates the source code with the given lock handle
-func (c *ADTClientImpl) updateSource(sourceURL, source, lockHandle string) error {
-	updateURL := sourceURL + "?lockHandle=" + lockHandle
-
-	// Add client and language parameters
-	if c.config.Client != "" {
-		updateURL += "&sap-client=" + c.config.Client
-	}
-	if c.config.Language != "" {
-		updateURL += "&sap-language=" + c.config.Language
-	}
-
-	req, err := http.NewRequest("PUT", updateURL, strings.NewReader(source))
-	if err != nil {
-		return fmt.Errorf("failed to create update request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("update request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("source update failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
-
-// unlockSource unlocks a source object
-func (c *ADTClientImpl) unlockSource(sourceURL, lockHandle string) error {
-	unlockURL := sourceURL + "?_action=UNLOCK"
-
-	// Add client and language parameters
-	if c.config.Client != "" {
-		unlockURL += "&sap-client=" + c.config.Client
-	}
-	if c.config.Language != "" {
-		unlockURL += "&sap-language=" + c.config.Language
-	}
-
-	// Create unlock XML payload
-	unlockXML := fmt.Sprintf(`<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
-  <asx:values>
-    <DATA>
-      <LOCK_HANDLE>%s</LOCK_HANDLE>
-    </DATA>
-  </asx:values>
-</asx:abap>`, lockHandle)
-
-	req, err := http.NewRequest("POST", unlockURL, strings.NewReader(unlockXML))
-	if err != nil {
-		return fmt.Errorf("failed to create unlock request: %w", err)
-	}
-
-	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("Content-Type", "application/xml")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("unlock request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("unlock failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-
-	return nil
-}
 
 // UpdateClass updates an existing ABAP class's source code
-func (c *ADTClientImpl) UpdateClass(name, source string) error {
+func (c *ADTClientImpl) UpdateClass(ctx context.Context, name, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2673,26 +1877,25 @@ func (c *ADTClientImpl) UpdateClass(name, source string) error {
 		zap.String("name", name),
 		zap.Int("source_length", len(source)))
 
-	// Step 1: Lock the class source
-	sourceURL := fmt.Sprintf("%s/oo/classes/%s/source/main", c.baseURL, name)
-	lockHandle, err := c.lockSource(sourceURL)
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/oo/classes/%s", nameLower)
+	sourcePath := fmt.Sprintf("/oo/classes/%s/source/main", nameLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
 	if err != nil {
-		return fmt.Errorf("failed to lock class source: %w", err)
+		return fmt.Errorf("failed to lock class: %w", err)
 	}
 
-	// Step 2: Update the source code
-	err = c.updateSource(sourceURL, source, lockHandle)
-	if err != nil {
-		c.unlockSource(sourceURL, lockHandle)
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock class",
+				zap.String("class", name),
+				zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to update class source: %w", err)
-	}
-
-	// Step 3: Unlock the source
-	err = c.unlockSource(sourceURL, lockHandle)
-	if err != nil {
-		c.logger.Warn("Failed to unlock class source",
-			zap.String("class", name),
-			zap.Error(err))
 	}
 
 	c.logger.Info("Class updated successfully", zap.String("name", name))
@@ -2700,7 +1903,7 @@ func (c *ADTClientImpl) UpdateClass(name, source string) error {
 }
 
 // UpdateInclude updates an existing ABAP include's source code
-func (c *ADTClientImpl) UpdateInclude(name, source string) error {
+func (c *ADTClientImpl) UpdateInclude(ctx context.Context, name, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2718,26 +1921,25 @@ func (c *ADTClientImpl) UpdateInclude(name, source string) error {
 		zap.String("name", name),
 		zap.Int("source_length", len(source)))
 
-	// Step 1: Lock the include source
-	sourceURL := fmt.Sprintf("%s/programs/includes/%s/source/main", c.baseURL, name)
-	lockHandle, err := c.lockSource(sourceURL)
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/programs/includes/%s", nameLower)
+	sourcePath := fmt.Sprintf("/programs/includes/%s/source/main", nameLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
 	if err != nil {
-		return fmt.Errorf("failed to lock include source: %w", err)
+		return fmt.Errorf("failed to lock include: %w", err)
 	}
 
-	// Step 2: Update the source code
-	err = c.updateSource(sourceURL, source, lockHandle)
-	if err != nil {
-		c.unlockSource(sourceURL, lockHandle)
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock include",
+				zap.String("include", name),
+				zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to update include source: %w", err)
-	}
-
-	// Step 3: Unlock the source
-	err = c.unlockSource(sourceURL, lockHandle)
-	if err != nil {
-		c.logger.Warn("Failed to unlock include source",
-			zap.String("include", name),
-			zap.Error(err))
 	}
 
 	c.logger.Info("Include updated successfully", zap.String("name", name))
@@ -2745,7 +1947,7 @@ func (c *ADTClientImpl) UpdateInclude(name, source string) error {
 }
 
 // UpdateInterface updates an existing ABAP interface's source code
-func (c *ADTClientImpl) UpdateInterface(name, source string) error {
+func (c *ADTClientImpl) UpdateInterface(ctx context.Context, name, source string) error {
 	if !c.IsAuthenticated() {
 		return fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2763,26 +1965,25 @@ func (c *ADTClientImpl) UpdateInterface(name, source string) error {
 		zap.String("name", name),
 		zap.Int("source_length", len(source)))
 
-	// Step 1: Lock the interface source
-	sourceURL := fmt.Sprintf("%s/oo/interfaces/%s/source/main", c.baseURL, name)
-	lockHandle, err := c.lockSource(sourceURL)
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/oo/interfaces/%s", nameLower)
+	sourcePath := fmt.Sprintf("/oo/interfaces/%s/source/main", nameLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
 	if err != nil {
-		return fmt.Errorf("failed to lock interface source: %w", err)
+		return fmt.Errorf("failed to lock interface: %w", err)
 	}
 
-	// Step 2: Update the source code
-	err = c.updateSource(sourceURL, source, lockHandle)
-	if err != nil {
-		c.unlockSource(sourceURL, lockHandle)
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock interface",
+				zap.String("interface", name),
+				zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
 		return fmt.Errorf("failed to update interface source: %w", err)
-	}
-
-	// Step 3: Unlock the source
-	err = c.unlockSource(sourceURL, lockHandle)
-	if err != nil {
-		c.logger.Warn("Failed to unlock interface source",
-			zap.String("interface", name),
-			zap.Error(err))
 	}
 
 	c.logger.Info("Interface updated successfully", zap.String("name", name))
@@ -2821,7 +2022,7 @@ type ActivationMsgEntry struct {
 }
 
 // ActivateObject activates an ABAP object (program, class, interface, etc.)
-func (c *ADTClientImpl) ActivateObject(objectType, objectName string) (*types.ActivationResult, error) {
+func (c *ADTClientImpl) ActivateObject(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -2857,7 +2058,7 @@ func (c *ADTClientImpl) ActivateObject(objectType, objectName string) (*types.Ac
 
 	reqURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(fullPayload))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(fullPayload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create activation request: %w", err)
 	}
@@ -2867,7 +2068,7 @@ func (c *ADTClientImpl) ActivateObject(objectType, objectName string) (*types.Ac
 	req.Header.Set("Accept", "application/*")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("activation request failed: %w", err)
 	}
@@ -2995,7 +2196,7 @@ type unitTestAlertDetail struct {
 }
 
 // RunUnitTests runs ABAP unit tests for the given object
-func (c *ADTClientImpl) RunUnitTests(objectType, objectName string) (*types.UnitTestResult, error) {
+func (c *ADTClientImpl) RunUnitTests(ctx context.Context, objectType, objectName string) (*types.UnitTestResult, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
 	}
@@ -3045,7 +2246,7 @@ func (c *ADTClientImpl) RunUnitTests(objectType, objectName string) (*types.Unit
 
 	reqURL := c.baseURL + "/abapunit/testruns?sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(fullPayload))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(fullPayload))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create unit test request: %w", err)
 	}
@@ -3055,7 +2256,7 @@ func (c *ADTClientImpl) RunUnitTests(objectType, objectName string) (*types.Unit
 	req.Header.Set("Accept", "application/vnd.sap.adt.abapunit.testruns.result.v2+xml")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("unit test request failed: %w", err)
 	}
@@ -3162,7 +2363,7 @@ type syntaxCheckMessage struct {
 
 // SyntaxCheck performs a syntax check on ABAP source via ADT checkruns endpoint.
 // POST /sap/bc/adt/checkruns?reporters=abapCheckRun
-func (c *ADTClientImpl) SyntaxCheck(objectType, objectName, source string) (*types.SyntaxCheckResult, error) {
+func (c *ADTClientImpl) SyntaxCheck(ctx context.Context, objectType, objectName, source string) (*types.SyntaxCheckResult, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated")
 	}
@@ -3187,7 +2388,7 @@ func (c *ADTClientImpl) SyntaxCheck(objectType, objectName, source string) (*typ
 
 	reqURL := c.baseURL + "/checkruns?reporters=abapCheckRun&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create syntax check request: %w", err)
 	}
@@ -3197,7 +2398,7 @@ func (c *ADTClientImpl) SyntaxCheck(objectType, objectName, source string) (*typ
 	req.Header.Set("Accept", "application/vnd.sap.adt.checkmessages+xml")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("syntax check request failed: %w", err)
 	}
@@ -3257,7 +2458,7 @@ type completionProposal struct {
 
 // GetCompletionProposals retrieves code completion proposals from ADT.
 // POST /sap/bc/adt/abapsource/codecompletion/proposal
-func (c *ADTClientImpl) GetCompletionProposals(objectType, objectName, source string, line, column int) ([]types.CompletionProposal, error) {
+func (c *ADTClientImpl) GetCompletionProposals(ctx context.Context, objectType, objectName, source string, line, column int) ([]types.CompletionProposal, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated")
 	}
@@ -3276,7 +2477,7 @@ func (c *ADTClientImpl) GetCompletionProposals(objectType, objectName, source st
 	reqURL := fmt.Sprintf("%s/abapsource/codecompletion/proposal?uri=%s&line=%d&column=%d&sap-client=%s&sap-language=%s",
 		c.baseURL, url.QueryEscape(uri), line, column, c.config.Client, c.config.Language)
 
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(source))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(source))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create completion request: %w", err)
 	}
@@ -3286,7 +2487,7 @@ func (c *ADTClientImpl) GetCompletionProposals(objectType, objectName, source st
 	req.Header.Set("Accept", "application/xml")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("completion request failed: %w", err)
 	}
@@ -3340,7 +2541,7 @@ type navigationResponse struct {
 
 // GetNavigationTarget retrieves the go-to-definition target from ADT.
 // POST /sap/bc/adt/navigation/target
-func (c *ADTClientImpl) GetNavigationTarget(objectType, objectName, source string, line, column int) (*types.NavigationTarget, error) {
+func (c *ADTClientImpl) GetNavigationTarget(ctx context.Context, objectType, objectName, source string, line, column int) (*types.NavigationTarget, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated")
 	}
@@ -3359,7 +2560,7 @@ func (c *ADTClientImpl) GetNavigationTarget(objectType, objectName, source strin
 	reqURL := fmt.Sprintf("%s/navigation/target?uri=%s&line=%d&column=%d&sap-client=%s&sap-language=%s",
 		c.baseURL, url.QueryEscape(uri), line, column, c.config.Client, c.config.Language)
 
-	req, err := http.NewRequest("POST", reqURL, strings.NewReader(source))
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(source))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create navigation request: %w", err)
 	}
@@ -3369,7 +2570,7 @@ func (c *ADTClientImpl) GetNavigationTarget(objectType, objectName, source strin
 	req.Header.Set("Accept", "application/xml")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("navigation request failed: %w", err)
 	}

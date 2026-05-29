@@ -28,7 +28,7 @@ Optionally include ABAP source context from a file.`,
 }
 
 func init() {
-	aiChatCmd.Flags().String("model", "groq", "LLM model to use")
+	aiChatCmd.Flags().String("model", "groq:openai/gpt-oss-120b", "LLM model to use")
 	aiChatCmd.Flags().String("context-file", "", "ABAP source file to include as context")
 	aiChatCmd.Flags().String("chat-id", "", "Resume an existing chat session (default: new session)")
 

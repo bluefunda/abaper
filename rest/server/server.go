@@ -25,55 +25,67 @@ type Config struct {
 
 // RestServer handles REST API requests with CLI feature parity (no AI)
 type RestServer struct {
-	logger    *zap.Logger
-	config    *Config
-	adtClient types.ADTClient // Use shared interface
+	logger        *zap.Logger
+	config        *Config
+	adtClient     types.ADTClient   // Full interface, used for lifecycle methods (IsAuthenticated, TestConnection)
+	sourceReader  types.SourceReader
+	sourceWriter  types.SourceWriter
+	packageBrowser types.PackageBrowser
 }
 
 // NewRestServer creates a new REST server instance with ADT client
 func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient) *RestServer {
 	return &RestServer{
-		logger:    logger.With(zap.String("component", "rest_server")),
-		config:    config,
-		adtClient: adtClient,
+		logger:         logger.With(zap.String("component", "rest_server")),
+		config:         config,
+		adtClient:      adtClient,
+		sourceReader:   adtClient,
+		sourceWriter:   adtClient,
+		packageBrowser: adtClient,
 	}
 }
 
-// Start starts the REST server
-func (rs *RestServer) Start(port string) {
-	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("port", port))
+// Handler returns an http.Handler with all routes registered on a private mux.
+// Using a private mux (not http.DefaultServeMux) allows multiple RestServer
+// instances and makes the server testable with httptest.NewServer.
+func (rs *RestServer) Handler() http.Handler {
+	mux := http.NewServeMux()
 
 	// API endpoints for CLI parity (no AI)
-	http.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
-	http.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
-	http.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
-	http.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
-	http.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
+	mux.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
+	mux.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
+	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
+	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
+	mux.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
 
 	// GitHub proxy endpoints
-	http.HandleFunc("/api/v1/github/oauth/callback", rs.corsHandler(rs.githubOAuthCallbackHandler))
-	http.HandleFunc("/api/v1/github/user", rs.corsHandler(rs.githubUserHandler))
-	http.HandleFunc("/api/v1/github/branches", rs.corsHandler(rs.githubBranchesHandler))
-	http.HandleFunc("/api/v1/github/tree", rs.corsHandler(rs.githubTreeHandler))
-	http.HandleFunc("/api/v1/github/file", rs.corsHandler(rs.githubFileHandler))
+	mux.HandleFunc("/api/v1/github/oauth/callback", rs.corsHandler(rs.githubOAuthCallbackHandler))
+	mux.HandleFunc("/api/v1/github/user", rs.corsHandler(rs.githubUserHandler))
+	mux.HandleFunc("/api/v1/github/branches", rs.corsHandler(rs.githubBranchesHandler))
+	mux.HandleFunc("/api/v1/github/tree", rs.corsHandler(rs.githubTreeHandler))
+	mux.HandleFunc("/api/v1/github/file", rs.corsHandler(rs.githubFileHandler))
 
 	// Removed AI endpoints - return feature removed messages
-	http.HandleFunc("/api/v1/ai/analyze", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/review", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/optimize", rs.corsHandler(rs.removedAIHandler))
-	http.HandleFunc("/api/v1/ai/create", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/analyze", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/review", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/optimize", rs.corsHandler(rs.removedAIHandler))
+	mux.HandleFunc("/api/v1/ai/create", rs.corsHandler(rs.removedAIHandler))
 
 	// Legacy AI endpoints
-	http.HandleFunc("/generate-code", rs.corsHandler(rs.generateCodeHandler))
-	http.HandleFunc("/generate-code-stream", rs.corsHandler(rs.generateCodeStreamHandler))
+	mux.HandleFunc("/generate-code", rs.corsHandler(rs.generateCodeHandler))
+	mux.HandleFunc("/generate-code-stream", rs.corsHandler(rs.generateCodeStreamHandler))
 
 	// Health and version endpoints
-	http.HandleFunc("/health", rs.healthHandler)
-	http.HandleFunc("/version", rs.versionHandler)
+	mux.HandleFunc("/health", rs.healthHandler)
+	mux.HandleFunc("/version", rs.versionHandler)
 
-	rs.logger.Info("REST server endpoints registered", zap.Int("endpoint_count", 17))
+	return mux
+}
 
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+// Start starts the REST server on the given port.
+func (rs *RestServer) Start(port string) {
+	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("port", port))
+	if err := http.ListenAndServe(":"+port, rs.Handler()); err != nil {
 		rs.logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }
@@ -97,8 +109,8 @@ func (rs *RestServer) corsHandler(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // sendSuccess sends a successful API response
-func (rs *RestServer) sendSuccess(w http.ResponseWriter, data interface{}) {
-	response := models.APIResponse{
+func (rs *RestServer) sendSuccess(w http.ResponseWriter, data any) {
+	response := models.APIResponse[any]{
 		Success: true,
 		Data:    data,
 	}
@@ -112,7 +124,7 @@ func (rs *RestServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 func (rs *RestServer) sendError(w http.ResponseWriter, message string, statusCode int) {
 	rs.logger.Warn("API error", zap.String("error", message), zap.Int("status", statusCode))
 
-	response := models.APIResponse{
+	response := models.APIResponse[any]{
 		Success: false,
 		Error:   message,
 	}
@@ -152,31 +164,32 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		zap.String("type", objectType),
 		zap.String("name", objectName))
 
+	ctx := r.Context()
 	var result any
 	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		result, err = rs.adtClient.GetProgram(objectName)
+		result, err = rs.sourceReader.GetProgram(ctx, objectName)
 	case "CLASS", "CLAS":
-		result, err = rs.adtClient.GetClass(objectName)
+		result, err = rs.sourceReader.GetClass(ctx, objectName)
 	case "FUNCTION", "FUNC":
 		if len(req.Args) == 0 {
 			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
 			return
 		}
 		functionGroup := strings.ToUpper(req.Args[0])
-		result, err = rs.adtClient.GetFunction(objectName, functionGroup)
+		result, err = rs.sourceReader.GetFunction(ctx, objectName, functionGroup)
 	case "INCLUDE", "INCL":
-		result, err = rs.adtClient.GetInclude(objectName)
+		result, err = rs.sourceReader.GetInclude(ctx, objectName)
 	case "INTERFACE", "INTF":
-		result, err = rs.adtClient.GetInterface(objectName)
+		result, err = rs.sourceReader.GetInterface(ctx, objectName)
 	case "STRUCTURE", "STRU":
-		result, err = rs.adtClient.GetStructure(objectName)
+		result, err = rs.sourceReader.GetStructure(ctx, objectName)
 	case "TABLE", "TABL":
-		result, err = rs.adtClient.GetTable(objectName)
+		result, err = rs.sourceReader.GetTable(ctx, objectName)
 	case "PACKAGE", "PACK":
-		result, err = rs.adtClient.GetPackageContents(objectName)
+		result, err = rs.packageBrowser.GetPackageContents(ctx, objectName)
 	default:
 		rs.sendError(w, "unsupported object type: "+objectType, http.StatusBadRequest)
 		return
@@ -234,23 +247,24 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		zap.String("package", packageName),
 		zap.Int("source_length", len(sourceCode)))
 
+	ctx := r.Context()
 	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		err = rs.adtClient.CreateProgram(objectName, description, packageName, sourceCode)
+		err = rs.sourceWriter.CreateProgram(ctx, objectName, description, packageName, sourceCode)
 	case "CLASS", "CLAS":
-		err = rs.adtClient.CreateClass(objectName, description, packageName, sourceCode)
+		err = rs.sourceWriter.CreateClass(ctx, objectName, description, packageName, sourceCode)
 	case "INCLUDE", "INCL":
-		err = rs.adtClient.CreateInclude(objectName, description, sourceCode)
+		err = rs.sourceWriter.CreateInclude(ctx, objectName, description, sourceCode)
 	case "INTERFACE", "INTF":
-		err = rs.adtClient.CreateInterface(objectName, description, sourceCode)
+		err = rs.sourceWriter.CreateInterface(ctx, objectName, description, sourceCode)
 	case "STRUCTURE", "STRU":
-		err = rs.adtClient.CreateStructure(objectName, description, sourceCode)
+		err = rs.sourceWriter.CreateStructure(ctx, objectName, description, sourceCode)
 	case "TABLE", "TABL":
-		err = rs.adtClient.CreateTable(objectName, description, sourceCode)
+		err = rs.sourceWriter.CreateTable(ctx, objectName, description, sourceCode)
 	case "FUNCTIONGROUP", "FUGR":
-		err = rs.adtClient.CreateFunctionGroup(objectName, description, sourceCode)
+		err = rs.sourceWriter.CreateFunctionGroup(ctx, objectName, description, sourceCode)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -262,7 +276,7 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Return success response with creation details
-	result := map[string]interface{}{
+	result := map[string]any{
 		"object_name": objectName,
 		"object_type": objectType,
 		"description": description,
@@ -316,7 +330,7 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 		zap.String("pattern", pattern),
 		zap.Strings("types", objectTypes))
 
-	results, err := rs.adtClient.SearchObjects(pattern, objectTypes)
+	results, err := rs.packageBrowser.SearchObjects(r.Context(), pattern, objectTypes)
 	if err != nil {
 		rs.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -360,7 +374,7 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 
 	switch listType {
 	case "packages", "package":
-		packages, err := rs.adtClient.ListPackages(pattern)
+		packages, err := rs.packageBrowser.ListPackages(r.Context(), pattern)
 		if err != nil {
 			rs.sendError(w, err.Error(), http.StatusInternalServerError)
 			return

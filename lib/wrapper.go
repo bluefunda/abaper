@@ -4,6 +4,7 @@ package lib
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/bluefunda/abaper/internal/adt"
 	"github.com/bluefunda/abaper/types"
@@ -35,8 +36,8 @@ func CreateADTClient(host, client, username, password string) (types.ADTClient, 
 		Password:        password,
 		Language:        "EN",
 		AllowSelfSigned: true,
-		ConnectTimeout:  30,
-		RequestTimeout:  120,
+		ConnectTimeout:  30 * time.Second,
+		RequestTimeout:  120 * time.Second,
 		Debug:           false,
 	}
 

@@ -1,23 +1,37 @@
 package commands
 
 import (
+	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/cobra"
+
 	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
-	"github.com/spf13/cobra"
+	"github.com/bluefunda/abaper/tui"
 )
 
 var version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:   "abaper",
-	Short: "ABAPer CLI — interact with ABAPer APIs from the command line",
-	Long: `ABAPer CLI is a command line interface for the ABAPer platform.
-It communicates with ABAPer APIs exposed through the ABAPer gateway
-to support developer workflows including code generation, compilation,
-deployment, and inspection.`,
+	Short: "ABAPer CLI — AI pair programmer for SAP ABAP developers",
+	Long: `ABAPer is an AI pair programmer for SAP ABAP developers.
+Run bare to start the interactive TUI, or use a subcommand for non-interactive workflows.`,
 	SilenceUsage: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		go client.Track("cli_invoked", map[string]string{"command": cmd.Name()})
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		p := tea.NewProgram(
+			tui.New(version),
+			tea.WithAltScreen(),
+			tea.WithMouseCellMotion(),
+		)
+		if _, err := p.Run(); err != nil {
+			return fmt.Errorf("tui: %w", err)
+		}
+		return nil
 	},
 }
 
