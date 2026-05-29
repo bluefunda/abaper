@@ -109,13 +109,13 @@ func runSystemList(_ *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  \tNAME\tHOST\tCLIENT\tUSERNAME")
+	_, _ = fmt.Fprintln(w, "  \tNAME\tHOST\tCLIENT\tUSERNAME")
 	for _, s := range cfg.Systems {
 		active := "  "
 		if s.ID == cfg.Active {
 			active = "● "
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", active, s.Name, s.Host, s.Client, s.Username)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", active, s.Name, s.Host, s.Client, s.Username)
 	}
 	return w.Flush()
 }
