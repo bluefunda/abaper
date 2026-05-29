@@ -23,6 +23,12 @@ type ObjectSearchMsg struct {
 	ObjectType string
 }
 
+// SourcePreviewMsg tells the app to fetch and display an object's source.
+type SourcePreviewMsg struct {
+	Name       string
+	ObjectType string
+}
+
 // UnknownCmdMsg is returned when a slash command is not found.
 type UnknownCmdMsg struct{ Name string }
 
@@ -75,6 +81,21 @@ var Registry = []Command{
 		Name:        "compact",
 		Description: "Summarize & compress context",
 		Handler:     func(_ []string) tea.Cmd { return nil },
+	},
+	{
+		Name:        "source",
+		Description: "Preview object source: /source <name> <type>, e.g. /source ZHELLO PROG/P",
+		Handler: func(args []string) tea.Cmd {
+			name := ""
+			objType := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			if len(args) > 1 {
+				objType = args[1]
+			}
+			return func() tea.Msg { return SourcePreviewMsg{Name: name, ObjectType: objType} }
+		},
 	},
 	{
 		Name:        "object",
