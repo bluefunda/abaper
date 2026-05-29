@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -15,18 +16,18 @@ type HybridBackend struct {
 
 	mu        sync.RWMutex
 	connected bool
-	stopCh    chan struct{}
 }
 
 // NewHybridBackend creates a hybrid backend that prefers ADT but falls back to offline.
-func NewHybridBackend(client types.ADTClient, workDir string) *HybridBackend {
+// The provided ctx controls the lifetime of the background connection monitor goroutine;
+// cancel it (or use a context derived from a server shutdown context) to stop monitoring.
+func NewHybridBackend(ctx context.Context, client types.ADTClient, workDir string) *HybridBackend {
 	h := &HybridBackend{
 		adt:       NewADTBackend(client),
 		offline:   NewOfflineBackend(workDir),
 		connected: client.IsAuthenticated(),
-		stopCh:    make(chan struct{}),
 	}
-	go h.connectionMonitor()
+	go h.connectionMonitor(ctx)
 	return h
 }
 
@@ -82,11 +83,6 @@ func (h *HybridBackend) IsConnected() bool {
 	return h.isConnected()
 }
 
-// Stop stops the background connection monitor
-func (h *HybridBackend) Stop() {
-	close(h.stopCh)
-}
-
 func (h *HybridBackend) isConnected() bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -99,14 +95,15 @@ func (h *HybridBackend) markDisconnected() {
 	h.mu.Unlock()
 }
 
-// connectionMonitor periodically checks if the ADT connection is available
-func (h *HybridBackend) connectionMonitor() {
+// connectionMonitor periodically checks if the ADT connection is available.
+// It exits when ctx is cancelled.
+func (h *HybridBackend) connectionMonitor(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-h.stopCh:
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			wasConnected := h.isConnected()

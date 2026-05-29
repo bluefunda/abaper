@@ -15,12 +15,13 @@ type APIRequest struct {
 	Config      map[string]string `json:"config,omitempty"`
 }
 
-// APIResponse represents a generic API response
-type APIResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-	Message string      `json:"message,omitempty"`
+// APIResponse is the standard response envelope. T is the data payload type.
+// Use APIResponse[any] when the payload type is dynamic or unknown.
+type APIResponse[T any] struct {
+	Success bool   `json:"success"`
+	Data    T      `json:"data,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // ObjectRequest for object retrieval requests

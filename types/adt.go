@@ -3,7 +3,11 @@
 // These types are shared across the CLI, REST server, and LSP server.
 package types
 
-import "encoding/xml"
+import (
+	"context"
+	"encoding/xml"
+	"time"
+)
 
 // ADT Response structures - shared between CLI and REST
 type ADTObject struct {
@@ -61,8 +65,8 @@ type ADTConfig struct {
 	Password        string `json:"password"`
 	Language        string `json:"language"`
 	AllowSelfSigned bool   `json:"allow_self_signed"`
-	ConnectTimeout  int    `json:"connect_timeout"`
-	RequestTimeout  int    `json:"request_timeout"`
+	ConnectTimeout  time.Duration `json:"connect_timeout"`
+	RequestTimeout  time.Duration `json:"request_timeout"`
 	Debug           bool   `json:"debug"`
 }
 
@@ -95,7 +99,7 @@ type ADTTypeInfo struct {
 	TypeKind    string                 `json:"type_kind"` // "DOMAIN", "DATA_ELEMENT", etc.
 	Description string                 `json:"description"`
 	Source      string                 `json:"source"`
-	Properties  map[string]interface{} `json:"properties"`
+	Properties  map[string]any `json:"properties"`
 }
 
 // ActivationResult holds the result of an object activation
@@ -144,56 +148,76 @@ const (
 	SessionStateless SessionType = "stateless"
 )
 
-// ADTClient interface - shared contract
-type ADTClient interface {
-	// Core object retrieval methods
-	GetProgram(name string) (*ADTSourceCode, error)
-	GetClass(name string) (*ADTSourceCode, error)
-	GetFunction(name, functionGroup string) (*ADTSourceCode, error)
-	GetInclude(name string) (*ADTSourceCode, error)
-	GetInterface(name string) (*ADTSourceCode, error)
-	GetStructure(name string) (*ADTSourceCode, error)
-	GetTable(name string) (*ADTSourceCode, error)
-	GetFunctionGroup(name string) (*ADTSourceCode, error)
+// SourceReader retrieves ABAP object source.
+type SourceReader interface {
+	GetProgram(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetClass(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetInclude(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetInterface(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetStructure(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetTable(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetFunction(ctx context.Context, functionName, functionGroup string) (*ADTSourceCode, error)
+	GetFunctionGroup(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetObjectSource(ctx context.Context, objectType, objectName string) (string, error)
+	CheckObjectExists(ctx context.Context, objectType, objectName string) (bool, error)
+}
 
-	// Package and search operations
-	GetPackageContents(name string) (*ADTPackage, error)
-	SearchObjects(pattern string, objectTypes []string) (*ADTSearchResult, error)
-	ListPackages(pattern string) ([]ADTPackage, error)
+// SourceWriter creates and updates ABAP objects.
+type SourceWriter interface {
+	CreateProgram(ctx context.Context, name, description, packageName, source string) error
+	CreateClass(ctx context.Context, name, description, packageName, source string) error
+	CreateInclude(ctx context.Context, name, description, source string) error
+	CreateInterface(ctx context.Context, name, description, source string) error
+	CreateStructure(ctx context.Context, name, description, source string) error
+	CreateTable(ctx context.Context, name, description, source string) error
+	CreateFunctionGroup(ctx context.Context, name, description, source string) error
+	UpdateProgram(ctx context.Context, name, source string) error
+	UpdateClass(ctx context.Context, name, source string) error
+	UpdateInclude(ctx context.Context, name, source string) error
+	UpdateInterface(ctx context.Context, name, source string) error
+}
 
-	// Connection and session management
-	TestConnection() error
-	IsAuthenticated() bool
+// PackageBrowser searches and navigates package contents.
+type PackageBrowser interface {
+	SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*ADTSearchResult, error)
+	ListPackages(ctx context.Context, pattern string) ([]ADTPackage, error)
+	GetPackageContents(ctx context.Context, name string) (*ADTPackage, error)
+}
+
+// ObjectActivator activates objects and runs tests.
+type ObjectActivator interface {
+	ActivateObject(ctx context.Context, objectType, objectName string) (*ActivationResult, error)
+	RunUnitTests(ctx context.Context, objectType, objectName string) (*UnitTestResult, error)
+}
+
+// LangFeatures provides LSP-style language intelligence.
+type LangFeatures interface {
+	SyntaxCheck(ctx context.Context, objectType, objectName, source string) (*SyntaxCheckResult, error)
+	GetCompletionProposals(ctx context.Context, objectType, objectName, source string, line, col int) ([]CompletionProposal, error)
+	GetNavigationTarget(ctx context.Context, objectType, objectName, source string, line, col int) (*NavigationTarget, error)
+}
+
+// SessionManager controls client lifecycle.
+type SessionManager interface {
 	Authenticate() error
+	IsAuthenticated() bool
+	TestConnection() error
 	SetSessionType(sessionType SessionType)
+}
 
-	// Extended operations (optional implementations)
-	GetTypeInfo(typeName string) (*ADTTypeInfo, error)
-	GetTransaction(transactionName string) (*ADTTransactionInfo, error)
-	GetTableContents(tableName string, maxRows int) (*ADTTableData, error)
-	GetTransports() ([]ADTTransport, error)
-	CreateProgram(name, description, packageName, source string) error
-	CreateInclude(name, description, source string) error
-	CreateClass(name, description, packageName, source string) error
-	CreateInterface(name, description, source string) error
-	CreateStructure(name, description, source string) error
-	CreateTable(name, description, source string) error
-	CreateFunctionGroup(name, description, source string) error
-	// Update operations
-	UpdateProgram(name, source string) error
-	UpdateClass(name, source string) error
-	UpdateInclude(name, source string) error
-	UpdateInterface(name, source string) error
-	// Object existence checking
-	CheckObjectExists(objectType, objectName string) (bool, error)
-	GetObjectSource(objectType, objectName string) (string, error)
-
-	// Activation and testing
-	ActivateObject(objectType, objectName string) (*ActivationResult, error)
-	RunUnitTests(objectType, objectName string) (*UnitTestResult, error)
-
-	// LSP support - syntax check, code completion, navigation
-	SyntaxCheck(objectType, objectName, source string) (*SyntaxCheckResult, error)
-	GetCompletionProposals(objectType, objectName, source string, line, column int) ([]CompletionProposal, error)
-	GetNavigationTarget(objectType, objectName, source string, line, column int) (*NavigationTarget, error)
+// ADTClient is the full capability interface satisfied by ADTClientImpl.
+// Prefer the smaller focused interfaces (SourceReader, LangFeatures, etc.)
+// when a consumer only needs a subset of operations.
+type ADTClient interface {
+	SessionManager
+	SourceReader
+	SourceWriter
+	PackageBrowser
+	ObjectActivator
+	LangFeatures
+	// Extended operations
+	GetTypeInfo(ctx context.Context, typeName string) (*ADTTypeInfo, error)
+	GetTransaction(ctx context.Context, transactionName string) (*ADTTransactionInfo, error)
+	GetTableContents(ctx context.Context, tableName string, maxRows int) (*ADTTableData, error)
+	GetTransports(ctx context.Context) ([]ADTTransport, error)
 }
