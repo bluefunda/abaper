@@ -440,6 +440,12 @@ func (c *Client) StreamChat(ctx context.Context, chatID string, req ChatRequest,
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Authorization", "Bearer "+c.Token)
 	httpReq.Header.Set("X-Realm", c.Realm)
+	if c.SAPHost != "" {
+		httpReq.Header.Set("X-SAP-Host", c.SAPHost)
+		httpReq.Header.Set("X-SAP-Client", c.SAPClient)
+		httpReq.Header.Set("X-SAP-User", c.SAPUser)
+		httpReq.Header.Set("X-SAP-Password", c.SAPPassword)
+	}
 
 	sseClient := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := sseClient.Do(httpReq)
