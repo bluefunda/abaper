@@ -447,6 +447,16 @@ func (c *ADTClientImpl) SearchObjects(ctx context.Context, pattern string, objec
 		url.QueryEscape(pattern),
 		maxResults)
 
+	if len(objectTypes) > 0 {
+		var sb strings.Builder
+		sb.WriteString(searchURL)
+		for _, ot := range objectTypes {
+			sb.WriteString("&objectType=")
+			sb.WriteString(url.QueryEscape(ot))
+		}
+		searchURL = sb.String()
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
