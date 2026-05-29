@@ -52,8 +52,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TYPE\tNAME\tDESCRIPTION")
 	for _, obj := range objects {
-		objType, _ := obj["object_type"].(string)
-		objName, _ := obj["object_name"].(string)
+		objType, _ := obj["type"].(string)
+		objName, _ := obj["name"].(string)
 		desc, _ := obj["description"].(string)
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", objType, objName, desc)
 	}
