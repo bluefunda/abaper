@@ -321,9 +321,8 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 	pattern := req.ObjectName
 	var objectTypes []string
 
-	// Convert args to object types
-	for _, arg := range req.Args {
-		objectTypes = append(objectTypes, strings.ToUpper(arg))
+	if req.ObjectType != "" {
+		objectTypes = []string{strings.ToUpper(req.ObjectType)}
 	}
 
 	rs.logger.Info("Searching objects via REST API",
