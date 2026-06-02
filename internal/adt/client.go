@@ -37,6 +37,8 @@ const (
 	classesCreateEndpoint   = "/oo/classes"
 	tableContentsEndpoint   = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
 	formatEndpoint          = "/repository/formatters/format"
+	transportInfoSuffix     = "/transportinfo"
+	createTransportSuffix   = "/transports"
 )
 
 // ErrNotFound is returned when an ADT object does not exist (HTTP 404).
@@ -2643,4 +2645,141 @@ func (c *ADTClientImpl) FormatSource(ctx context.Context, source string) (string
 	}
 
 	return string(body), nil
+}
+
+// objectBasePath derives the ADT object path (without /sap/bc/adt prefix) from objectTypeToURI.
+// Used to build transport-related URLs that are relative to the object, not the source.
+func objectBasePath(objectType, objectName string) (string, error) {
+	uri, err := objectTypeToURI(objectType, objectName)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(uri, "/sap/bc/adt"), nil
+}
+
+// transportInfoXML holds the parsed response from GET .../transportinfo
+type transportInfoXML struct {
+	ObjectName string              `xml:"DATA>OBJECTNAME"`
+	Package    string              `xml:"DATA>DEVCLASS"`
+	Transports []transportEntryXML `xml:"DATA>TRANSPORTS>item"`
+}
+
+type transportEntryXML struct {
+	Number      string `xml:"TRKORR"`
+	Description string `xml:"AS4TEXT"`
+	Owner       string `xml:"AS4USER"`
+	Status      string `xml:"TRSTATUS"`
+	Type        string `xml:"TRFUNCTION"`
+	Target      string `xml:"TARSYSTEM"`
+	Date        string `xml:"AS4DATE"`
+}
+
+func (c *ADTClientImpl) GetTransportInfo(ctx context.Context, objectType, objectName string) (*types.ADTTransportInfo, error) {
+	if !c.IsAuthenticated() {
+		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	objectName = strings.ToUpper(strings.TrimSpace(objectName))
+	basePath, err := objectBasePath(objectType, objectName)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s%s%s?sap-client=%s&sap-language=%s",
+		c.baseURL, basePath, transportInfoSuffix, c.config.Client, c.config.Language)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.addAuthHeaders(req)
+	req.Header.Set("Accept", "application/xml")
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get transport info failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	var parsed transportInfoXML
+	if err := xml.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse transport info response: %w", err)
+	}
+
+	result := &types.ADTTransportInfo{
+		ObjectName: parsed.ObjectName,
+		Package:    parsed.Package,
+		Transports: make([]types.ADTTransportEntry, len(parsed.Transports)),
+	}
+	for i, t := range parsed.Transports {
+		result.Transports[i] = types.ADTTransportEntry{
+			Number:      t.Number,
+			Description: t.Description,
+			Owner:       t.Owner,
+			Status:      t.Status,
+			Type:        t.Type,
+			Target:      t.Target,
+			Date:        t.Date,
+		}
+	}
+	return result, nil
+}
+
+func (c *ADTClientImpl) CreateTransport(ctx context.Context, objectType, objectName, description, packageName string) (string, error) {
+	if !c.IsAuthenticated() {
+		return "", fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	objectName = strings.ToUpper(strings.TrimSpace(objectName))
+	packageName = strings.ToUpper(strings.TrimSpace(packageName))
+	basePath, err := objectBasePath(objectType, objectName)
+	if err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf("%s%s%s?sap-client=%s&sap-language=%s&description=%s&devclass=%s",
+		c.baseURL, basePath, createTransportSuffix,
+		c.config.Client, c.config.Language,
+		description, packageName)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, http.NoBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.addAuthHeaders(req)
+	req.Header.Set("Accept", "text/plain, application/xml")
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("create transport failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	// SAP ADT returns the transport number either as plain text or in the Location header.
+	if location := resp.Header.Get("Location"); location != "" {
+		parts := strings.Split(strings.TrimSuffix(location, "/"), "/")
+		return parts[len(parts)-1], nil
+	}
+	return strings.TrimSpace(string(body)), nil
 }

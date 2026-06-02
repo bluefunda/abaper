@@ -57,6 +57,22 @@ type ADTTransport struct {
 	Objects     []ADTObject `json:"objects"`
 }
 
+type ADTTransportEntry struct {
+	Number      string `json:"number"`
+	Description string `json:"description"`
+	Owner       string `json:"owner"`
+	Status      string `json:"status"` // "D"=modifiable, "R"=released
+	Type        string `json:"type"`   // "K"=workbench, "W"=customizing
+	Target      string `json:"target"`
+	Date        string `json:"date"`
+}
+
+type ADTTransportInfo struct {
+	ObjectName string              `json:"object_name"`
+	Package    string              `json:"package"`
+	Transports []ADTTransportEntry `json:"transports"`
+}
+
 // ADT Configuration
 type ADTConfig struct {
 	Host            string `json:"host"`
@@ -221,4 +237,6 @@ type ADTClient interface {
 	GetTransaction(ctx context.Context, transactionName string) (*ADTTransactionInfo, error)
 	GetTableContents(ctx context.Context, tableName string, maxRows int) (*ADTTableData, error)
 	GetTransports(ctx context.Context) ([]ADTTransport, error)
+	GetTransportInfo(ctx context.Context, objectType, objectName string) (*ADTTransportInfo, error)
+	CreateTransport(ctx context.Context, objectType, objectName, description, packageName string) (string, error)
 }
