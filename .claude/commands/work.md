@@ -3,7 +3,7 @@ description: Implement a GitHub issue end to end
 argument-hint: [issue-number]
 ---
 Issue:
-!`gh issue view $ARGUMENTS 2>/dev/null`
+!`gh issue view $ARGUMENTS 2>&1`
 
 Implement this issue against its acceptance criteria.
 - Stay within "In scope"; respect "Out of scope".
