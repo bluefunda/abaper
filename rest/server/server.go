@@ -14,26 +14,29 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	APIKey      string
-	ADTHost     string
-	ADTClient   string
-	ADTUsername string
-	ADTPassword string
-	Verbose     bool
-	Quiet       bool
+	APIKey          string
+	ADTHost         string
+	ADTClient       string
+	ADTUsername     string
+	ADTPassword     string
+	AllowSelfSigned bool
+	Verbose         bool
+	Quiet           bool
 }
 
 // RestServer handles REST API requests with CLI feature parity (no AI)
 type RestServer struct {
-	logger        *zap.Logger
-	config        *Config
-	adtClient     types.ADTClient   // Full interface, used for lifecycle methods (IsAuthenticated, TestConnection)
-	sourceReader  types.SourceReader
-	sourceWriter  types.SourceWriter
+	logger         *zap.Logger
+	config         *Config
+	pool           *Pool           // nil when running in single-system mode
+	adtClient      types.ADTClient // static fallback client (single-system mode)
+	sourceReader   types.SourceReader
+	sourceWriter   types.SourceWriter
 	packageBrowser types.PackageBrowser
 }
 
-// NewRestServer creates a new REST server instance with ADT client
+// NewRestServer creates a new REST server instance with a static ADT client.
+// Use NewRestServerWithPool for multi-system support.
 func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient) *RestServer {
 	return &RestServer{
 		logger:         logger.With(zap.String("component", "rest_server")),
@@ -43,6 +46,53 @@ func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient
 		sourceWriter:   adtClient,
 		packageBrowser: adtClient,
 	}
+}
+
+// NewRestServerWithPool creates a REST server that selects an ADT client from
+// the pool on each request using X-SAP-* headers, with a static fallback.
+func NewRestServerWithPool(config *Config, logger *zap.Logger, pool *Pool, fallback types.ADTClient) *RestServer {
+	rs := &RestServer{
+		logger:    logger.With(zap.String("component", "rest_server")),
+		config:    config,
+		pool:      pool,
+		adtClient: fallback,
+	}
+	if fallback != nil {
+		rs.sourceReader = fallback
+		rs.sourceWriter = fallback
+		rs.packageBrowser = fallback
+	}
+	return rs
+}
+
+// clientForRequest returns the ADT client to use for this request.
+// If X-SAP-* headers are present and a pool is configured, a pooled client is
+// returned. Otherwise falls back to the static client.
+func (rs *RestServer) clientForRequest(r *http.Request) (types.ADTClient, error) {
+	host := r.Header.Get("X-SAP-Host")
+	sapClient := r.Header.Get("X-SAP-Client")
+	user := r.Header.Get("X-SAP-User")
+	password := r.Header.Get("X-SAP-Password")
+
+	if rs.pool != nil && host != "" && user != "" && password != "" {
+		if sapClient == "" {
+			sapClient = "100"
+		}
+		cfg := types.ADTConfig{
+			Host:            host,
+			Client:          sapClient,
+			Username:        user,
+			Password:        password,
+			Language:        "EN",
+			AllowSelfSigned: rs.config.AllowSelfSigned,
+		}
+		return rs.pool.Get(r.Context(), cfg)
+	}
+
+	if rs.adtClient == nil {
+		return nil, fmt.Errorf("no ADT client configured and no X-SAP-* headers provided")
+	}
+	return rs.adtClient, nil
 }
 
 // Handler returns an http.Handler with all routes registered on a private mux.
@@ -152,8 +202,9 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -166,30 +217,31 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	var result any
-	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		result, err = rs.sourceReader.GetProgram(ctx, objectName)
+		result, err = c.GetProgram(ctx, objectName)
 	case "CLASS", "CLAS":
-		result, err = rs.sourceReader.GetClass(ctx, objectName)
+		result, err = c.GetClass(ctx, objectName)
 	case "FUNCTION", "FUNC":
 		if len(req.Args) == 0 {
 			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
 			return
 		}
 		functionGroup := strings.ToUpper(req.Args[0])
-		result, err = rs.sourceReader.GetFunction(ctx, objectName, functionGroup)
+		result, err = c.GetFunction(ctx, objectName, functionGroup)
 	case "INCLUDE", "INCL":
-		result, err = rs.sourceReader.GetInclude(ctx, objectName)
+		result, err = c.GetInclude(ctx, objectName)
 	case "INTERFACE", "INTF":
-		result, err = rs.sourceReader.GetInterface(ctx, objectName)
+		result, err = c.GetInterface(ctx, objectName)
 	case "STRUCTURE", "STRU":
-		result, err = rs.sourceReader.GetStructure(ctx, objectName)
+		result, err = c.GetStructure(ctx, objectName)
 	case "TABLE", "TABL":
-		result, err = rs.sourceReader.GetTable(ctx, objectName)
+		result, err = c.GetTable(ctx, objectName)
+	case "DDLS", "DATA_DEFINITION":
+		result, err = c.GetDDLSource(ctx, objectName)
 	case "PACKAGE", "PACK":
-		result, err = rs.packageBrowser.GetPackageContents(ctx, objectName)
+		result, err = c.GetPackageContents(ctx, objectName)
 	default:
 		rs.sendError(w, "unsupported object type: "+objectType, http.StatusBadRequest)
 		return
@@ -221,8 +273,9 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -248,23 +301,22 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		zap.Int("source_length", len(sourceCode)))
 
 	ctx := r.Context()
-	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		err = rs.sourceWriter.CreateProgram(ctx, objectName, description, packageName, sourceCode)
+		err = c.CreateProgram(ctx, objectName, description, packageName, sourceCode)
 	case "CLASS", "CLAS":
-		err = rs.sourceWriter.CreateClass(ctx, objectName, description, packageName, sourceCode)
+		err = c.CreateClass(ctx, objectName, description, packageName, sourceCode)
 	case "INCLUDE", "INCL":
-		err = rs.sourceWriter.CreateInclude(ctx, objectName, description, sourceCode)
+		err = c.CreateInclude(ctx, objectName, description, sourceCode)
 	case "INTERFACE", "INTF":
-		err = rs.sourceWriter.CreateInterface(ctx, objectName, description, sourceCode)
+		err = c.CreateInterface(ctx, objectName, description, sourceCode)
 	case "STRUCTURE", "STRU":
-		err = rs.sourceWriter.CreateStructure(ctx, objectName, description, sourceCode)
+		err = c.CreateStructure(ctx, objectName, description, sourceCode)
 	case "TABLE", "TABL":
-		err = rs.sourceWriter.CreateTable(ctx, objectName, description, sourceCode)
+		err = c.CreateTable(ctx, objectName, description, sourceCode)
 	case "FUNCTIONGROUP", "FUGR":
-		err = rs.sourceWriter.CreateFunctionGroup(ctx, objectName, description, sourceCode)
+		err = c.CreateFunctionGroup(ctx, objectName, description, sourceCode)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -313,14 +365,14 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
 	pattern := req.ObjectName
 	var objectTypes []string
-
 	if req.ObjectType != "" {
 		objectTypes = []string{strings.ToUpper(req.ObjectType)}
 	}
@@ -329,7 +381,7 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 		zap.String("pattern", pattern),
 		zap.Strings("types", objectTypes))
 
-	results, err := rs.packageBrowser.SearchObjects(r.Context(), pattern, objectTypes)
+	results, err := c.SearchObjects(r.Context(), pattern, objectTypes)
 	if err != nil {
 		rs.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -356,8 +408,9 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -373,7 +426,7 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 
 	switch listType {
 	case "packages", "package":
-		packages, err := rs.packageBrowser.ListPackages(r.Context(), pattern)
+		packages, err := c.ListPackages(r.Context(), pattern)
 		if err != nil {
 			rs.sendError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -393,12 +446,13 @@ func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
 
 	rs.logger.Info("Testing ADT connection via REST API")
 
-	if rs.adtClient == nil {
-		rs.sendError(w, "ADT client not configured", http.StatusInternalServerError)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	if err := rs.adtClient.TestConnection(); err != nil {
+	if err := c.TestConnection(); err != nil {
 		rs.logger.Error("ADT connection test failed", zap.Error(err))
 		rs.sendError(w, "Connection failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
@@ -406,7 +460,7 @@ func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
 
 	connectionStatus := map[string]any{
 		"status":        "connected",
-		"authenticated": rs.adtClient.IsAuthenticated(),
+		"authenticated": c.IsAuthenticated(),
 		"timestamp":     time.Now().UTC(),
 		"message":       "ADT connection successful",
 	}
@@ -421,16 +475,26 @@ func (rs *RestServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		adtStatus = "connected"
 	}
 
+	poolSize := 0
+	if rs.pool != nil {
+		poolSize = rs.pool.Size()
+		if poolSize > 0 {
+			adtStatus = "connected"
+		}
+	}
+
 	health := map[string]any{
-		"status":     "healthy",
-		"timestamp":  time.Now().UTC(),
-		"adt_status": adtStatus,
+		"status":           "healthy",
+		"timestamp":        time.Now().UTC(),
+		"adt_status":       adtStatus,
+		"pool_connections": poolSize,
 		"features": map[string]bool{
 			"quiet_mode_default": true,
 			"file_logging":       true,
 			"adt_integration":    true,
 			"cli_parity":         true,
 			"ai_removed":         true,
+			"connection_pool":    rs.pool != nil,
 		},
 	}
 
