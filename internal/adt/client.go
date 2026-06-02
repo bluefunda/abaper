@@ -36,6 +36,7 @@ const (
 	programsCreateEndpoint  = "/programs/programs"
 	classesCreateEndpoint   = "/oo/classes"
 	tableContentsEndpoint   = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
+	formatEndpoint          = "/repository/formatters/format"
 )
 
 // ErrNotFound is returned when an ADT object does not exist (HTTP 404).
@@ -2608,4 +2609,38 @@ func (c *ADTClientImpl) GetNavigationTarget(ctx context.Context, objectType, obj
 		Line:       navResp.Line,
 		Column:     navResp.Column,
 	}, nil
+}
+
+func (c *ADTClientImpl) FormatSource(ctx context.Context, source string) (string, error) {
+	if !c.IsAuthenticated() {
+		return "", fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	url := c.baseURL + formatEndpoint
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(source))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	req.Header.Set("Accept", "text/plain")
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("format failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	return string(body), nil
 }

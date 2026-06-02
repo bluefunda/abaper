@@ -195,6 +195,7 @@ type LangFeatures interface {
 	SyntaxCheck(ctx context.Context, objectType, objectName, source string) (*SyntaxCheckResult, error)
 	GetCompletionProposals(ctx context.Context, objectType, objectName, source string, line, col int) ([]CompletionProposal, error)
 	GetNavigationTarget(ctx context.Context, objectType, objectName, source string, line, col int) (*NavigationTarget, error)
+	FormatSource(ctx context.Context, source string) (string, error)
 }
 
 // SessionManager controls client lifecycle.
