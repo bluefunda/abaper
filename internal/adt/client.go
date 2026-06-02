@@ -31,6 +31,7 @@ const (
 	interfacesEndpoint      = "/oo/interfaces/%s/source/main"
 	domainsEndpoint         = "/ddic/domains/%s/source/main"
 	dataElementsEndpoint    = "/ddic/dataelements/%s"
+	ddlSourcesEndpoint      = "/ddic/ddl/sources/%s/source/main"
 	searchEndpoint = "/repository/informationsystem/search"
 	transactionEndpoint     = "/repository/informationsystem/objectproperties/values"
 	programsCreateEndpoint  = "/programs/programs"
@@ -348,6 +349,11 @@ func (c *ADTClientImpl) GetFunctionGroup(ctx context.Context, functionGroup stri
 		zap.Int("source_length", len(result.Source)))
 
 	return result, nil
+}
+
+// GetDDLSource retrieves CDS / DDL source code.
+func (c *ADTClientImpl) GetDDLSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "DDLS", name, ddlSourcesEndpoint)
 }
 
 // GetInclude retrieves ABAP include source code.
@@ -1602,6 +1608,8 @@ func (c *ADTClientImpl) GetObjectSource(ctx context.Context, objectType, objectN
 		sourcePath = fmt.Sprintf("/programs/includes/%s/source/main", strings.ToLower(objectName))
 	case "INTERFACE":
 		sourcePath = fmt.Sprintf("/oo/interfaces/%s/source/main", strings.ToLower(objectName))
+	case "DDLS", "DATA_DEFINITION":
+		sourcePath = fmt.Sprintf("/ddic/ddl/sources/%s/source/main", strings.ToLower(objectName))
 	default:
 		return "", fmt.Errorf("unsupported object type for source retrieval: %s", objectType)
 	}
@@ -2110,6 +2118,8 @@ func objectTypeToURI(objectType, objectName string) (string, error) {
 		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s", name), nil
 	case "INCL", "INCLUDE":
 		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", name), nil
+	case "DDLS", "DATA_DEFINITION":
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", name), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for activation: %s", objectType)
 	}

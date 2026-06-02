@@ -174,6 +174,7 @@ type SourceReader interface {
 	GetTable(ctx context.Context, name string) (*ADTSourceCode, error)
 	GetFunction(ctx context.Context, functionName, functionGroup string) (*ADTSourceCode, error)
 	GetFunctionGroup(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetDDLSource(ctx context.Context, name string) (*ADTSourceCode, error)
 	GetObjectSource(ctx context.Context, objectType, objectName string) (string, error)
 	CheckObjectExists(ctx context.Context, objectType, objectName string) (bool, error)
 }
