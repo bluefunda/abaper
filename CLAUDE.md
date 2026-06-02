@@ -47,3 +47,13 @@ make vet          # Run go vet
 - Branches: `<type>/<short-description>`
 - PRs: conventional commit title, target `main`, squash-merged
 - Releases: release-please + GoReleaser for multi-platform binaries + Docker image
+
+## How we work (operating rules)
+
+- Every task starts from a GitHub issue. Read it fully first: `gh issue view <N> 2>/dev/null`.
+- M/L issues: produce a short plan and WAIT for approval before editing. S: proceed.
+- Respect the issue's "Out of scope" — do not refactor or touch anything outside it.
+- Commit in small steps, Conventional Commits, referencing the issue: `feat(abaper): ... (#<N>)`.
+- Before claiming done: run the issue's "Verify with" commands; confirm every acceptance box.
+- Open the PR with "Closes #<N>" + a one-paragraph, release-note-ready summary.
+- Secrets come from Vault/env, never hardcoded. Never run destructive git/deploy without asking.
