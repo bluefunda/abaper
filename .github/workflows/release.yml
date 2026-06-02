@@ -52,7 +52,6 @@ jobs:
   release-notes:
     needs: [release, goreleaser]
     if: ${{ needs.release.outputs.release_created }}
-    continue-on-error: true
     uses: bluefunda/release-foundry/.github/workflows/github-release-notes.yml@main
     with:
       tag: ${{ needs.release.outputs.tag_name }}
