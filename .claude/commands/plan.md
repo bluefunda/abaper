@@ -4,7 +4,7 @@ argument-hint: [issue-number]
 allowed-tools: Bash(gh issue view:*), Read, Grep, Glob
 ---
 Issue:
-!`gh issue view $ARGUMENTS 2>/dev/null`
+!`gh issue view $ARGUMENTS 2>&1`
 
 Read the issue above and this repo's CLAUDE.md, then:
 1. Restate the outcome and acceptance criteria in your own words.
