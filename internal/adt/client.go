@@ -2003,6 +2003,99 @@ func (c *ADTClientImpl) UpdateInterface(ctx context.Context, name, source string
 	return nil
 }
 
+func (c *ADTClientImpl) UpdateFunction(ctx context.Context, functionName, functionGroup, source string) error {
+	if !c.IsAuthenticated() {
+		return fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	functionName = strings.ToUpper(strings.TrimSpace(functionName))
+	functionGroup = strings.ToUpper(strings.TrimSpace(functionGroup))
+	if functionName == "" {
+		return fmt.Errorf("function name cannot be empty")
+	}
+	if functionGroup == "" {
+		return fmt.Errorf("function group cannot be empty")
+	}
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf("source code cannot be empty")
+	}
+
+	c.logger.Info("Updating ABAP function module",
+		zap.String("function", functionName),
+		zap.String("function_group", functionGroup),
+		zap.Int("source_length", len(source)))
+
+	groupLower := strings.ToLower(functionGroup)
+	funcLower := strings.ToLower(functionName)
+	objectPath := fmt.Sprintf("/functions/groups/%s/fmodules/%s", groupLower, funcLower)
+	sourcePath := fmt.Sprintf("/functions/groups/%s/fmodules/%s/source/main", groupLower, funcLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
+	if err != nil {
+		return fmt.Errorf("failed to lock function module: %w", err)
+	}
+
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock function module",
+				zap.String("function", functionName),
+				zap.String("function_group", functionGroup),
+				zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
+		return fmt.Errorf("failed to update function module source: %w", err)
+	}
+
+	c.logger.Info("Function module updated successfully",
+		zap.String("function", functionName),
+		zap.String("function_group", functionGroup))
+	return nil
+}
+
+func (c *ADTClientImpl) UpdateFunctionGroup(ctx context.Context, name, source string) error {
+	if !c.IsAuthenticated() {
+		return fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if name == "" {
+		return fmt.Errorf("function group name cannot be empty")
+	}
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf("source code cannot be empty")
+	}
+
+	c.logger.Info("Updating ABAP function group",
+		zap.String("name", name),
+		zap.Int("source_length", len(source)))
+
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/functions/groups/%s", nameLower)
+	sourcePath := fmt.Sprintf("/functions/groups/%s/source/main", nameLower)
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
+	if err != nil {
+		return fmt.Errorf("failed to lock function group: %w", err)
+	}
+
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock function group",
+				zap.String("name", name),
+				zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
+		return fmt.Errorf("failed to update function group source: %w", err)
+	}
+
+	c.logger.Info("Function group updated successfully", zap.String("name", name))
+	return nil
+}
+
 // objectTypeToURI maps an object type and name to the ADT URI path
 func objectTypeToURI(objectType, objectName string) (string, error) {
 	name := strings.ToLower(objectName)

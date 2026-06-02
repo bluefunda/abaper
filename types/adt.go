@@ -191,6 +191,8 @@ type SourceWriter interface {
 	UpdateClass(ctx context.Context, name, source string) error
 	UpdateInclude(ctx context.Context, name, source string) error
 	UpdateInterface(ctx context.Context, name, source string) error
+	UpdateFunction(ctx context.Context, functionName, functionGroup, source string) error
+	UpdateFunctionGroup(ctx context.Context, name, source string) error
 }
 
 // PackageBrowser searches and navigates package contents.
