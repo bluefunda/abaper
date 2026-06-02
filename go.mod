@@ -1,6 +1,6 @@
 module github.com/bluefunda/abaper
 
-go 1.25.1
+go 1.26.0
 
 require (
 	github.com/bluefunda/banner v0.1.0
