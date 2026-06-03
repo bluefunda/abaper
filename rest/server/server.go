@@ -104,8 +104,17 @@ func (rs *RestServer) Handler() http.Handler {
 	// API endpoints for CLI parity (no AI)
 	mux.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
 	mux.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
+	mux.HandleFunc("/api/v1/objects/save", rs.corsHandler(rs.saveObjectHandler))
 	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
+	mux.HandleFunc("/api/v1/objects/activate", rs.corsHandler(rs.activateObjectHandler))
+	mux.HandleFunc("/api/v1/syntax-check", rs.corsHandler(rs.syntaxCheckHandler))
+	mux.HandleFunc("/api/v1/format", rs.corsHandler(rs.formatSourceHandler))
+	mux.HandleFunc("/api/v1/completion", rs.corsHandler(rs.completionHandler))
+	mux.HandleFunc("/api/v1/navigation", rs.corsHandler(rs.navigationHandler))
+	mux.HandleFunc("/api/v1/unit-tests", rs.corsHandler(rs.unitTestsHandler))
+	mux.HandleFunc("/api/v1/transports/info", rs.corsHandler(rs.transportInfoHandler))
+	mux.HandleFunc("/api/v1/transports/create", rs.corsHandler(rs.createTransportHandler))
 	mux.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
 
 	// GitHub proxy endpoints
@@ -435,6 +444,302 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 	default:
 		rs.sendError(w, "unsupported list type: "+listType, http.StatusBadRequest)
 	}
+}
+
+func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, and source are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+	ctx := r.Context()
+	switch objectType {
+	case "PROGRAM", "PROG":
+		err = c.UpdateProgram(ctx, objectName, req.Source)
+	case "CLASS", "CLAS":
+		err = c.UpdateClass(ctx, objectName, req.Source)
+	case "INCLUDE", "INCL":
+		err = c.UpdateInclude(ctx, objectName, req.Source)
+	case "INTERFACE", "INTF":
+		err = c.UpdateInterface(ctx, objectName, req.Source)
+	case "FUNCTION", "FUNC":
+		if len(req.Args) == 0 {
+			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
+			return
+		}
+		err = c.UpdateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), req.Source)
+	case "FUNCTIONGROUP", "FUGR":
+		err = c.UpdateFunctionGroup(ctx, objectName, req.Source)
+	default:
+		rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]any{
+		"object_name":     objectName,
+		"object_type":     objectType,
+		"source_inserted": true,
+		"source_length":   len(req.Source),
+		"message":         fmt.Sprintf("%s %s saved successfully", objectType, objectName),
+	})
+}
+
+func (rs *RestServer) activateObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+	ctx := r.Context()
+	// Optionally save source before activating.
+	if req.Source != "" {
+		switch objectType {
+		case "PROGRAM", "PROG":
+			err = c.UpdateProgram(ctx, objectName, req.Source)
+		case "CLASS", "CLAS":
+			err = c.UpdateClass(ctx, objectName, req.Source)
+		case "INCLUDE", "INCL":
+			err = c.UpdateInclude(ctx, objectName, req.Source)
+		case "INTERFACE", "INTF":
+			err = c.UpdateInterface(ctx, objectName, req.Source)
+		}
+		if err != nil {
+			rs.sendError(w, "save before activate failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	result, err := c.ActivateObject(ctx, objectType, objectName)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) syntaxCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, and source are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.SyntaxCheck(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) formatSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Source == "" {
+		rs.sendError(w, "source is required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	formatted, err := c.FormatSource(r.Context(), req.Source)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]string{"source": formatted})
+}
+
+func (rs *RestServer) completionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, source, line, and column are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	proposals, err := c.GetCompletionProposals(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, proposals)
+}
+
+func (rs *RestServer) navigationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, source, line, and column are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	target, err := c.GetNavigationTarget(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, target)
+}
+
+func (rs *RestServer) unitTestsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.RunUnitTests(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) transportInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.GetTransportInfo(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) createTransportHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Description == "" {
+		rs.sendError(w, "object_type, object_name, and description are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	transportNumber, err := c.CreateTransport(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Description, strings.ToUpper(req.Package))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]string{
+		"transport_number": transportNumber,
+		"description":      req.Description,
+		"package":          strings.ToUpper(req.Package),
+	})
 }
 
 // connectHandler handles connection test requests (CLI connect command equivalent)

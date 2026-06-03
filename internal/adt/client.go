@@ -36,10 +36,13 @@ const (
 	transactionEndpoint     = "/repository/informationsystem/objectproperties/values"
 	programsCreateEndpoint  = "/programs/programs"
 	classesCreateEndpoint   = "/oo/classes"
-	tableContentsEndpoint   = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
-	formatEndpoint          = "/repository/formatters/format"
-	transportInfoSuffix     = "/transportinfo"
-	createTransportSuffix   = "/transports"
+	tableContentsEndpoint      = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
+	formatEndpoint             = "/repository/formatters/format"
+	transportInfoSuffix        = "/transportinfo"
+	createTransportSuffix      = "/transports"
+	interfacesCreateEndpoint   = "/oo/interfaces"
+	functionGroupsCreateEndpoint = "/functions/groups"
+	includesCreateEndpoint     = "/programs/includes"
 )
 
 // ErrNotFound is returned when an ADT object does not exist (HTTP 404).
@@ -967,29 +970,200 @@ func (c *ADTClientImpl) activateClass(ctx context.Context, opts *CreateClassOpti
 	return nil
 }
 
-// CreateInterface creates a new ABAP interface
+// createObjectMetadata is a generic helper that POSTs an XML metadata payload
+// to create an ADT object skeleton (no source). The caller provides the full
+// marshalled XML payload and the creation endpoint path.
+func (c *ADTClientImpl) createObjectMetadata(ctx context.Context, endpoint, xmlPayload string) error {
+	url := c.baseURL + endpoint
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader([]byte(xmlPayload)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d - %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// createAndPopulate is a generic helper: create metadata → optionally write source → activate.
+func (c *ADTClientImpl) createAndPopulate(ctx context.Context, createEndpoint, objectPath, sourcePath, activateType, name, source string, activate bool) error {
+	// Write source if provided.
+	if source != "" {
+		lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
+		if err != nil {
+			return fmt.Errorf("failed to lock: %w", err)
+		}
+		defer func() {
+			if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+				c.logger.Warn("Failed to unlock", zap.String("path", objectPath), zap.Error(unlockErr))
+			}
+		}()
+		if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
+			return fmt.Errorf("failed to write source: %w", err)
+		}
+	}
+	if !activate {
+		return nil
+	}
+	uri := fmt.Sprintf("/sap/bc/adt%s", objectPath)
+	activationReq := ActivationRequest{
+		Namespace: "http://www.sap.com/adt/core",
+		ObjectRef: ActivationRef{URI: uri, Name: strings.ToUpper(name)},
+	}
+	xmlPayload, err := xml.Marshal(activationReq)
+	if err != nil {
+		return fmt.Errorf("marshal activation: %w", err)
+	}
+	fullPayload := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + string(xmlPayload)
+	activateURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
+	req, err := http.NewRequestWithContext(ctx, "POST", activateURL, strings.NewReader(fullPayload))
+	if err != nil {
+		return fmt.Errorf("failed to create activation request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	req.Header.Set("Accept", "application/*")
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return fmt.Errorf("activation request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+type interfaceCreatePayload struct {
+	XMLName     xml.Name         `xml:"intf:abapInterface"`
+	IntfNS      string           `xml:"xmlns:intf,attr"`
+	AdtcoreNS   string           `xml:"xmlns:adtcore,attr"`
+	Description string           `xml:"adtcore:description,attr"`
+	Name        string           `xml:"adtcore:name,attr"`
+	Type        string           `xml:"adtcore:type,attr"`
+	Responsible string           `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef  `xml:"adtcore:packageRef"`
+}
+
 func (c *ADTClientImpl) CreateInterface(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("not implemented")
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := interfaceCreatePayload{
+		IntfNS:      "http://www.sap.com/adt/oo/interfaces",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "INTF/OI",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal interface metadata: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, interfacesCreateEndpoint, xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create interface %s: %w", name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, interfacesCreateEndpoint,
+		"/oo/interfaces/"+nameLower,
+		"/oo/interfaces/"+nameLower+"/source/main",
+		"INTF", name, source, source != "")
 }
 
-// CreateFunctionGroup creates a new ABAP function group
+type functionGroupCreatePayload struct {
+	XMLName     xml.Name        `xml:"fgroup:functionGroup"`
+	FgroupNS    string          `xml:"xmlns:fgroup,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
+}
+
 func (c *ADTClientImpl) CreateFunctionGroup(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("not implemented")
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := functionGroupCreatePayload{
+		FgroupNS:    "http://www.sap.com/adt/functions/groups",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "FUGR/FF",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal function group metadata: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, functionGroupsCreateEndpoint, xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create function group %s: %w", name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, functionGroupsCreateEndpoint,
+		"/functions/groups/"+nameLower,
+		"/functions/groups/"+nameLower+"/source/main",
+		"FUGR", name, source, source != "")
 }
 
-// CreateInclude creates a new ABAP include
+type includeCreatePayload struct {
+	XMLName     xml.Name        `xml:"include:abapInclude"`
+	IncludeNS   string          `xml:"xmlns:include,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
+}
+
 func (c *ADTClientImpl) CreateInclude(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("not implemented")
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := includeCreatePayload{
+		IncludeNS:   "http://www.sap.com/adt/programs/includes",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "PROG/I",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal include metadata: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, includesCreateEndpoint, xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create include %s: %w", name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, includesCreateEndpoint,
+		"/programs/includes/"+nameLower,
+		"/programs/includes/"+nameLower+"/source/main",
+		"INCL", name, source, source != "")
 }
 
-// CreateStructure creates a new ABAP structure
+// CreateStructure creates a new ABAP structure (DDIC).
+// SAP ADT does not expose a direct HTTP creation endpoint for DDIC structures;
+// they must be created through the DDIC workbench. This returns a clear error.
 func (c *ADTClientImpl) CreateStructure(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("CreateStructure: SAP ADT does not support programmatic DDIC structure creation via REST — use transaction SE11")
 }
 
-// CreateTable creates a new ABAP table
+// CreateTable creates a new ABAP table (DDIC).
+// SAP ADT does not expose a direct HTTP creation endpoint for DDIC tables;
+// they must be created through the DDIC workbench. This returns a clear error.
 func (c *ADTClientImpl) CreateTable(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("not implemented")
+	return fmt.Errorf("CreateTable: SAP ADT does not support programmatic DDIC table creation via REST — use transaction SE11")
 }
 
 // addAuthHeaders adds authentication and session headers to the request
@@ -2331,34 +2505,21 @@ func (c *ADTClientImpl) RunUnitTests(ctx context.Context, objectType, objectName
 		return nil, err
 	}
 
-	// Build unit test run configuration XML
-	config := unitTestRunConfig{
-		AunitNS: "http://www.sap.com/adt/aunit",
-		External: unitTestExternal{
-			Coverage: unitTestCoverage{Active: "false"},
-		},
-		Options: unitTestOptions{
-			URIType: unitTestURIType{Value: "semantic"},
-		},
-		ObjectSets: unitTestObjectSets{
-			ObjectSet: unitTestObjectSet{
-				Kind: "inclusive",
-				ObjectRefs: unitTestObjectRefs{
-					AdtcoreNS: "http://www.sap.com/adt/core",
-					Refs: []unitTestObjRef{
-						{URI: uri},
-					},
-				},
-			},
-		},
-	}
-
-	xmlPayload, err := xml.Marshal(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal unit test config: %w", err)
-	}
-
-	fullPayload := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + string(xmlPayload)
+	// Build unit test run configuration XML using a template string to avoid
+	// Go's xml package limitations with mixed namespace prefixes (adtcore vs aunit).
+	// objectSets must be in the adtcore namespace per SAP ADT spec.
+	fullPayload := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<aunit:runConfiguration xmlns:aunit="http://www.sap.com/adt/aunit" xmlns:adtcore="http://www.sap.com/adt/core">
+  <aunit:external><aunit:coverage active="false"/></aunit:external>
+  <aunit:options><aunit:uriType value="semantic"/></aunit:options>
+  <adtcore:objectSets>
+    <adtcore:objectSet adtcore:kind="inclusive">
+      <adtcore:objectReferences>
+        <adtcore:objectReference adtcore:uri="%s" adtcore:name="%s"/>
+      </adtcore:objectReferences>
+    </adtcore:objectSet>
+  </adtcore:objectSets>
+</aunit:runConfiguration>`, uri, objectName)
 
 	reqURL := c.baseURL + "/abapunit/testruns?sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
@@ -2462,23 +2623,28 @@ func (c *ADTClientImpl) RunUnitTests(ctx context.Context, objectType, objectName
 // LSP Support: Syntax Check, Code Completion, Navigation
 // ============================================================
 
-// syntaxCheckResponse XML structures for parsing check run results
+// syntaxCheckResponse XML structures for parsing SAP ADT checkruns response.
+// Root element: chkrun:checkRunReports → chkrun:checkReport → chkrun:checkMessageList → chkrun:checkMessage
+// Message attributes use the chkrun: namespace prefix.
+// Line/column are encoded in the URI fragment: #start=LINE,COL
 type syntaxCheckResponse struct {
-	XMLName  xml.Name             `xml:"checkRun"`
-	Messages []syntaxCheckMessage `xml:"checkMessage"`
+	XMLName xml.Name            `xml:"checkRunReports"`
+	Reports []syntaxCheckReport `xml:"checkReport"`
+}
+
+type syntaxCheckReport struct {
+	Messages []syntaxCheckMessage `xml:"checkMessageList>checkMessage"`
 }
 
 type syntaxCheckMessage struct {
-	URI      string `xml:"uri,attr"`
-	Type     string `xml:"type,attr"`
-	Severity string `xml:"severity,attr"`
-	Text     string `xml:",chardata"`
-	Line     int    `xml:"line,attr"`
-	Column   int    `xml:"column,attr"`
+	URI       string `xml:"uri,attr"`
+	Type      string `xml:"type,attr"`
+	ShortText string `xml:"shortText,attr"`
 }
 
 // SyntaxCheck performs a syntax check on ABAP source via ADT checkruns endpoint.
-// POST /sap/bc/adt/checkruns?reporters=abapCheckRun
+// It writes source to the working copy first (lock→PUT→unlock) so SAP checks
+// the provided source rather than the stored active version.
 func (c *ADTClientImpl) SyntaxCheck(ctx context.Context, objectType, objectName, source string) (*types.SyntaxCheckResult, error) {
 	if !c.IsAuthenticated() {
 		return nil, fmt.Errorf("client not authenticated")
@@ -2494,13 +2660,26 @@ func (c *ADTClientImpl) SyntaxCheck(ctx context.Context, objectType, objectName,
 		zap.String("type", objectType),
 		zap.String("name", objectName))
 
-	// Build the check run request XML
+	// SAP ADT ignores inline source in checkruns; it checks the stored working
+	// copy. To check the provided source, write it to the working copy first.
+	adtPath := strings.TrimPrefix(uri, "/sap/bc/adt")
+	sourcePath := adtPath + "/source/main"
+
+	lockHandle, corrNr, lockErr := c.lockObject(ctx, adtPath)
+	if lockErr == nil {
+		// Write source to working copy; ignore write errors (we still check and unlock).
+		_ = c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr)
+		defer func() {
+			if unlockErr := c.unlockObject(ctx, adtPath, lockHandle); unlockErr != nil {
+				c.logger.Warn("Failed to unlock after syntax check", zap.Error(unlockErr))
+			}
+		}()
+	}
+
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <chkrun:checkObjectList xmlns:chkrun="http://www.sap.com/adt/checkrun" xmlns:adtcore="http://www.sap.com/adt/core">
-  <chkrun:checkObject adtcore:uri="%s" chkrun:version="active">
-    <chkrun:source>%s</chkrun:source>
-  </chkrun:checkObject>
-</chkrun:checkObjectList>`, uri, escapeXML(source))
+  <chkrun:checkObject adtcore:uri="%s" chkrun:version="working"/>
+</chkrun:checkObjectList>`, uri)
 
 	reqURL := c.baseURL + "/checkruns?reporters=abapCheckRun&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
 
@@ -2534,20 +2713,31 @@ func (c *ADTClientImpl) SyntaxCheck(ctx context.Context, objectType, objectName,
 	if len(responseBody) > 0 {
 		var checkResp syntaxCheckResponse
 		if xmlErr := xml.Unmarshal(responseBody, &checkResp); xmlErr == nil {
-			for _, msg := range checkResp.Messages {
-				severity := "error"
-				switch strings.ToLower(msg.Severity) {
-				case "w", "warning":
-					severity = "warning"
-				case "i", "info", "information":
-					severity = "info"
+			for _, report := range checkResp.Reports {
+				for _, msg := range report.Messages {
+					severity := "error"
+					switch strings.ToUpper(msg.Type) {
+					case "W":
+						severity = "warning"
+					case "I", "S":
+						severity = "info"
+					}
+					// Line/column encoded in URI fragment: #start=LINE,COL
+					line, col := 0, 0
+					if idx := strings.Index(msg.URI, "#start="); idx != -1 {
+						parts := strings.SplitN(msg.URI[idx+7:], ",", 2)
+						if len(parts) == 2 {
+							fmt.Sscanf(parts[0], "%d", &line)
+							fmt.Sscanf(parts[1], "%d", &col)
+						}
+					}
+					result.Messages = append(result.Messages, types.SyntaxCheckMessage{
+						Severity: severity,
+						Text:     strings.TrimSpace(msg.ShortText),
+						Line:     line,
+						Column:   col,
+					})
 				}
-				result.Messages = append(result.Messages, types.SyntaxCheckMessage{
-					Severity: severity,
-					Text:     strings.TrimSpace(msg.Text),
-					Line:     msg.Line,
-					Column:   msg.Column,
-				})
 			}
 		}
 	}

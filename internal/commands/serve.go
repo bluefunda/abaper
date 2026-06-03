@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -52,8 +53,30 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		}
 	} else {
 		sys = sysCfg.GetActive()
-		if sys == nil {
-			return fmt.Errorf("no SAP systems configured — run: abaper system add --help")
+	}
+
+	// Fall back to environment variables when no stored system is available.
+	// Useful on remote hosts where ~/.abaper/systems.json is not populated.
+	if sys == nil {
+		host := os.Getenv("SAP_HOST")
+		if host == "" {
+			host = "https://localhost:8443"
+		}
+		user := os.Getenv("SAP_USERNAME")
+		pass := os.Getenv("SAP_PASSWORD")
+		client := os.Getenv("SAP_CLIENT")
+		if client == "" {
+			client = "001"
+		}
+		if user == "" || pass == "" {
+			return fmt.Errorf("no SAP system configured — run 'abaper system add' or set SAP_HOST, SAP_USERNAME, SAP_PASSWORD env vars")
+		}
+		sys = &config.SAPSystem{
+			Name:     host,
+			Host:     host,
+			Client:   client,
+			Username: user,
+			Password: pass,
 		}
 	}
 

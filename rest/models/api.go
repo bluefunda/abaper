@@ -10,6 +10,9 @@ type APIRequest struct {
 	Description string            `json:"description,omitempty"`
 	Source      string            `json:"source,omitempty"`
 	Package     string            `json:"package,omitempty"`
+	ETag        string            `json:"etag,omitempty"`
+	Line        int               `json:"line,omitempty"`
+	Column      int               `json:"column,omitempty"`
 	Args        []string          `json:"args,omitempty"`
 	Prompt      string            `json:"prompt,omitempty"`
 	Config      map[string]string `json:"config,omitempty"`
