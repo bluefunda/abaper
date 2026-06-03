@@ -14,26 +14,29 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	APIKey      string
-	ADTHost     string
-	ADTClient   string
-	ADTUsername string
-	ADTPassword string
-	Verbose     bool
-	Quiet       bool
+	APIKey          string
+	ADTHost         string
+	ADTClient       string
+	ADTUsername     string
+	ADTPassword     string
+	AllowSelfSigned bool
+	Verbose         bool
+	Quiet           bool
 }
 
 // RestServer handles REST API requests with CLI feature parity (no AI)
 type RestServer struct {
-	logger        *zap.Logger
-	config        *Config
-	adtClient     types.ADTClient   // Full interface, used for lifecycle methods (IsAuthenticated, TestConnection)
-	sourceReader  types.SourceReader
-	sourceWriter  types.SourceWriter
+	logger         *zap.Logger
+	config         *Config
+	pool           *Pool           // nil when running in single-system mode
+	adtClient      types.ADTClient // static fallback client (single-system mode)
+	sourceReader   types.SourceReader
+	sourceWriter   types.SourceWriter
 	packageBrowser types.PackageBrowser
 }
 
-// NewRestServer creates a new REST server instance with ADT client
+// NewRestServer creates a new REST server instance with a static ADT client.
+// Use NewRestServerWithPool for multi-system support.
 func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient) *RestServer {
 	return &RestServer{
 		logger:         logger.With(zap.String("component", "rest_server")),
@@ -45,6 +48,53 @@ func NewRestServer(config *Config, logger *zap.Logger, adtClient types.ADTClient
 	}
 }
 
+// NewRestServerWithPool creates a REST server that selects an ADT client from
+// the pool on each request using X-SAP-* headers, with a static fallback.
+func NewRestServerWithPool(config *Config, logger *zap.Logger, pool *Pool, fallback types.ADTClient) *RestServer {
+	rs := &RestServer{
+		logger:    logger.With(zap.String("component", "rest_server")),
+		config:    config,
+		pool:      pool,
+		adtClient: fallback,
+	}
+	if fallback != nil {
+		rs.sourceReader = fallback
+		rs.sourceWriter = fallback
+		rs.packageBrowser = fallback
+	}
+	return rs
+}
+
+// clientForRequest returns the ADT client to use for this request.
+// If X-SAP-* headers are present and a pool is configured, a pooled client is
+// returned. Otherwise falls back to the static client.
+func (rs *RestServer) clientForRequest(r *http.Request) (types.ADTClient, error) {
+	host := r.Header.Get("X-SAP-Host")
+	sapClient := r.Header.Get("X-SAP-Client")
+	user := r.Header.Get("X-SAP-User")
+	password := r.Header.Get("X-SAP-Password")
+
+	if rs.pool != nil && host != "" && user != "" && password != "" {
+		if sapClient == "" {
+			sapClient = "100"
+		}
+		cfg := types.ADTConfig{
+			Host:            host,
+			Client:          sapClient,
+			Username:        user,
+			Password:        password,
+			Language:        "EN",
+			AllowSelfSigned: rs.config.AllowSelfSigned,
+		}
+		return rs.pool.Get(r.Context(), cfg)
+	}
+
+	if rs.adtClient == nil {
+		return nil, fmt.Errorf("no ADT client configured and no X-SAP-* headers provided")
+	}
+	return rs.adtClient, nil
+}
+
 // Handler returns an http.Handler with all routes registered on a private mux.
 // Using a private mux (not http.DefaultServeMux) allows multiple RestServer
 // instances and makes the server testable with httptest.NewServer.
@@ -54,8 +104,17 @@ func (rs *RestServer) Handler() http.Handler {
 	// API endpoints for CLI parity (no AI)
 	mux.HandleFunc("/api/v1/objects/get", rs.corsHandler(rs.getObjectHandler))
 	mux.HandleFunc("/api/v1/objects/create", rs.corsHandler(rs.createObjectHandler))
+	mux.HandleFunc("/api/v1/objects/save", rs.corsHandler(rs.saveObjectHandler))
 	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
+	mux.HandleFunc("/api/v1/objects/activate", rs.corsHandler(rs.activateObjectHandler))
+	mux.HandleFunc("/api/v1/syntax-check", rs.corsHandler(rs.syntaxCheckHandler))
+	mux.HandleFunc("/api/v1/format", rs.corsHandler(rs.formatSourceHandler))
+	mux.HandleFunc("/api/v1/completion", rs.corsHandler(rs.completionHandler))
+	mux.HandleFunc("/api/v1/navigation", rs.corsHandler(rs.navigationHandler))
+	mux.HandleFunc("/api/v1/unit-tests", rs.corsHandler(rs.unitTestsHandler))
+	mux.HandleFunc("/api/v1/transports/info", rs.corsHandler(rs.transportInfoHandler))
+	mux.HandleFunc("/api/v1/transports/create", rs.corsHandler(rs.createTransportHandler))
 	mux.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
 
 	// GitHub proxy endpoints
@@ -152,8 +211,9 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -166,30 +226,31 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	var result any
-	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		result, err = rs.sourceReader.GetProgram(ctx, objectName)
+		result, err = c.GetProgram(ctx, objectName)
 	case "CLASS", "CLAS":
-		result, err = rs.sourceReader.GetClass(ctx, objectName)
+		result, err = c.GetClass(ctx, objectName)
 	case "FUNCTION", "FUNC":
 		if len(req.Args) == 0 {
 			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
 			return
 		}
 		functionGroup := strings.ToUpper(req.Args[0])
-		result, err = rs.sourceReader.GetFunction(ctx, objectName, functionGroup)
+		result, err = c.GetFunction(ctx, objectName, functionGroup)
 	case "INCLUDE", "INCL":
-		result, err = rs.sourceReader.GetInclude(ctx, objectName)
+		result, err = c.GetInclude(ctx, objectName)
 	case "INTERFACE", "INTF":
-		result, err = rs.sourceReader.GetInterface(ctx, objectName)
+		result, err = c.GetInterface(ctx, objectName)
 	case "STRUCTURE", "STRU":
-		result, err = rs.sourceReader.GetStructure(ctx, objectName)
+		result, err = c.GetStructure(ctx, objectName)
 	case "TABLE", "TABL":
-		result, err = rs.sourceReader.GetTable(ctx, objectName)
+		result, err = c.GetTable(ctx, objectName)
+	case "DDLS", "DATA_DEFINITION":
+		result, err = c.GetDDLSource(ctx, objectName)
 	case "PACKAGE", "PACK":
-		result, err = rs.packageBrowser.GetPackageContents(ctx, objectName)
+		result, err = c.GetPackageContents(ctx, objectName)
 	default:
 		rs.sendError(w, "unsupported object type: "+objectType, http.StatusBadRequest)
 		return
@@ -221,8 +282,9 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -248,23 +310,22 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		zap.Int("source_length", len(sourceCode)))
 
 	ctx := r.Context()
-	var err error
 
 	switch objectType {
 	case "PROGRAM", "PROG":
-		err = rs.sourceWriter.CreateProgram(ctx, objectName, description, packageName, sourceCode)
+		err = c.CreateProgram(ctx, objectName, description, packageName, sourceCode)
 	case "CLASS", "CLAS":
-		err = rs.sourceWriter.CreateClass(ctx, objectName, description, packageName, sourceCode)
+		err = c.CreateClass(ctx, objectName, description, packageName, sourceCode)
 	case "INCLUDE", "INCL":
-		err = rs.sourceWriter.CreateInclude(ctx, objectName, description, sourceCode)
+		err = c.CreateInclude(ctx, objectName, description, sourceCode)
 	case "INTERFACE", "INTF":
-		err = rs.sourceWriter.CreateInterface(ctx, objectName, description, sourceCode)
+		err = c.CreateInterface(ctx, objectName, description, sourceCode)
 	case "STRUCTURE", "STRU":
-		err = rs.sourceWriter.CreateStructure(ctx, objectName, description, sourceCode)
+		err = c.CreateStructure(ctx, objectName, description, sourceCode)
 	case "TABLE", "TABL":
-		err = rs.sourceWriter.CreateTable(ctx, objectName, description, sourceCode)
+		err = c.CreateTable(ctx, objectName, description, sourceCode)
 	case "FUNCTIONGROUP", "FUGR":
-		err = rs.sourceWriter.CreateFunctionGroup(ctx, objectName, description, sourceCode)
+		err = c.CreateFunctionGroup(ctx, objectName, description, sourceCode)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -313,14 +374,14 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
 	pattern := req.ObjectName
 	var objectTypes []string
-
 	if req.ObjectType != "" {
 		objectTypes = []string{strings.ToUpper(req.ObjectType)}
 	}
@@ -329,7 +390,7 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 		zap.String("pattern", pattern),
 		zap.Strings("types", objectTypes))
 
-	results, err := rs.packageBrowser.SearchObjects(r.Context(), pattern, objectTypes)
+	results, err := c.SearchObjects(r.Context(), pattern, objectTypes)
 	if err != nil {
 		rs.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -356,8 +417,9 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !rs.adtClient.IsAuthenticated() {
-		rs.sendError(w, "ADT client not authenticated", http.StatusUnauthorized)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -373,7 +435,7 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 
 	switch listType {
 	case "packages", "package":
-		packages, err := rs.packageBrowser.ListPackages(r.Context(), pattern)
+		packages, err := c.ListPackages(r.Context(), pattern)
 		if err != nil {
 			rs.sendError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -382,6 +444,302 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 	default:
 		rs.sendError(w, "unsupported list type: "+listType, http.StatusBadRequest)
 	}
+}
+
+func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, and source are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+	ctx := r.Context()
+	switch objectType {
+	case "PROGRAM", "PROG":
+		err = c.UpdateProgram(ctx, objectName, req.Source)
+	case "CLASS", "CLAS":
+		err = c.UpdateClass(ctx, objectName, req.Source)
+	case "INCLUDE", "INCL":
+		err = c.UpdateInclude(ctx, objectName, req.Source)
+	case "INTERFACE", "INTF":
+		err = c.UpdateInterface(ctx, objectName, req.Source)
+	case "FUNCTION", "FUNC":
+		if len(req.Args) == 0 {
+			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
+			return
+		}
+		err = c.UpdateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), req.Source)
+	case "FUNCTIONGROUP", "FUGR":
+		err = c.UpdateFunctionGroup(ctx, objectName, req.Source)
+	default:
+		rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]any{
+		"object_name":     objectName,
+		"object_type":     objectType,
+		"source_inserted": true,
+		"source_length":   len(req.Source),
+		"message":         fmt.Sprintf("%s %s saved successfully", objectType, objectName),
+	})
+}
+
+func (rs *RestServer) activateObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+	ctx := r.Context()
+	// Optionally save source before activating.
+	if req.Source != "" {
+		switch objectType {
+		case "PROGRAM", "PROG":
+			err = c.UpdateProgram(ctx, objectName, req.Source)
+		case "CLASS", "CLAS":
+			err = c.UpdateClass(ctx, objectName, req.Source)
+		case "INCLUDE", "INCL":
+			err = c.UpdateInclude(ctx, objectName, req.Source)
+		case "INTERFACE", "INTF":
+			err = c.UpdateInterface(ctx, objectName, req.Source)
+		}
+		if err != nil {
+			rs.sendError(w, "save before activate failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	result, err := c.ActivateObject(ctx, objectType, objectName)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) syntaxCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, and source are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.SyntaxCheck(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) formatSourceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Source == "" {
+		rs.sendError(w, "source is required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	formatted, err := c.FormatSource(r.Context(), req.Source)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]string{"source": formatted})
+}
+
+func (rs *RestServer) completionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, source, line, and column are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	proposals, err := c.GetCompletionProposals(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, proposals)
+}
+
+func (rs *RestServer) navigationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
+		rs.sendError(w, "object_type, object_name, source, line, and column are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	target, err := c.GetNavigationTarget(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, target)
+}
+
+func (rs *RestServer) unitTestsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.RunUnitTests(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) transportInfoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.GetTransportInfo(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
+func (rs *RestServer) createTransportHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" || req.Description == "" {
+		rs.sendError(w, "object_type, object_name, and description are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	transportNumber, err := c.CreateTransport(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Description, strings.ToUpper(req.Package))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]string{
+		"transport_number": transportNumber,
+		"description":      req.Description,
+		"package":          strings.ToUpper(req.Package),
+	})
 }
 
 // connectHandler handles connection test requests (CLI connect command equivalent)
@@ -393,12 +751,13 @@ func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
 
 	rs.logger.Info("Testing ADT connection via REST API")
 
-	if rs.adtClient == nil {
-		rs.sendError(w, "ADT client not configured", http.StatusInternalServerError)
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	if err := rs.adtClient.TestConnection(); err != nil {
+	if err := c.TestConnection(); err != nil {
 		rs.logger.Error("ADT connection test failed", zap.Error(err))
 		rs.sendError(w, "Connection failed: "+err.Error(), http.StatusServiceUnavailable)
 		return
@@ -406,7 +765,7 @@ func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
 
 	connectionStatus := map[string]any{
 		"status":        "connected",
-		"authenticated": rs.adtClient.IsAuthenticated(),
+		"authenticated": c.IsAuthenticated(),
 		"timestamp":     time.Now().UTC(),
 		"message":       "ADT connection successful",
 	}
@@ -421,16 +780,26 @@ func (rs *RestServer) healthHandler(w http.ResponseWriter, r *http.Request) {
 		adtStatus = "connected"
 	}
 
+	poolSize := 0
+	if rs.pool != nil {
+		poolSize = rs.pool.Size()
+		if poolSize > 0 {
+			adtStatus = "connected"
+		}
+	}
+
 	health := map[string]any{
-		"status":     "healthy",
-		"timestamp":  time.Now().UTC(),
-		"adt_status": adtStatus,
+		"status":           "healthy",
+		"timestamp":        time.Now().UTC(),
+		"adt_status":       adtStatus,
+		"pool_connections": poolSize,
 		"features": map[string]bool{
 			"quiet_mode_default": true,
 			"file_logging":       true,
 			"adt_integration":    true,
 			"cli_parity":         true,
 			"ai_removed":         true,
+			"connection_pool":    rs.pool != nil,
 		},
 	}
 
