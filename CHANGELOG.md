@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.9.1](https://github.com/bluefunda/abaper/compare/v1.9.0...v1.9.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **docker:** align builder image with go.mod (golang:1.26-alpine) ([#72](https://github.com/bluefunda/abaper/issues/72)) ([ff5f6f2](https://github.com/bluefunda/abaper/commit/ff5f6f2fced8beb0e94cc523d55b0a3c31644b9b))
+
 ## [1.9.0](https://github.com/bluefunda/abaper/compare/v1.8.0...v1.9.0) (2026-06-04)
 
 
