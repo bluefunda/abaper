@@ -56,71 +56,69 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Fall back to environment variables when no stored system is available.
-	// Useful on remote hosts where ~/.abaper/systems.json is not populated.
 	if sys == nil {
 		host := os.Getenv("SAP_HOST")
-		if host == "" {
-			host = "https://localhost:8443"
-		}
 		user := os.Getenv("SAP_USERNAME")
 		pass := os.Getenv("SAP_PASSWORD")
 		client := os.Getenv("SAP_CLIENT")
 		if client == "" {
 			client = "001"
 		}
-		if user == "" || pass == "" {
-			return fmt.Errorf("no SAP system configured — run 'abaper system add' or set SAP_HOST, SAP_USERNAME, SAP_PASSWORD env vars")
-		}
-		sys = &config.SAPSystem{
-			Name:     host,
-			Host:     host,
-			Client:   client,
-			Username: user,
-			Password: pass,
+		if host != "" && user != "" && pass != "" {
+			sys = &config.SAPSystem{
+				Name:     host,
+				Host:     host,
+				Client:   client,
+				Username: user,
+				Password: pass,
+			}
 		}
 	}
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync() //nolint:errcheck
 
-	logger.Info("Starting ABAPer REST server",
-		zap.String("port", port),
-		zap.String("sap_host", sys.Host),
-		zap.String("sap_client", sys.Client),
-		zap.String("sap_user", sys.Username))
-
-	adtCfg := types.ADTConfig{
-		Host:            sys.Host,
-		Client:          sys.Client,
-		Username:        sys.Username,
-		Password:        sys.Password,
-		Language:        "EN",
-		AllowSelfSigned: allowSelfSigned,
-	}
-
-	// Build and authenticate the default (static) client.
-	staticClient := adt.NewADTClient(&adtCfg)
-	if err := staticClient.Authenticate(); err != nil {
-		return fmt.Errorf("authenticate %s: %w", sys.Host, err)
-	}
-	logger.Info("Authenticated with SAP system", zap.String("host", sys.Host))
-
 	// Build connection pool (for multi-system requests via X-SAP-* headers).
 	pool := server.NewPool(30*time.Minute, logger)
 	pool.StartEviction(cmd.Context(), 5*time.Minute)
 
-	cfg := &server.Config{
-		ADTHost:         sys.Host,
-		ADTClient:       sys.Client,
-		ADTUsername:     sys.Username,
-		ADTPassword:     sys.Password,
-		AllowSelfSigned: allowSelfSigned,
+	cfg := &server.Config{AllowSelfSigned: allowSelfSigned}
+	var staticClient types.ADTClient
+
+	if sys != nil {
+		adtCfg := types.ADTConfig{
+			Host:            sys.Host,
+			Client:          sys.Client,
+			Username:        sys.Username,
+			Password:        sys.Password,
+			Language:        "EN",
+			AllowSelfSigned: allowSelfSigned,
+		}
+		staticClient = adt.NewADTClient(&adtCfg)
+		if err := staticClient.Authenticate(); err != nil {
+			return fmt.Errorf("authenticate %s: %w", sys.Host, err)
+		}
+		cfg.ADTHost = sys.Host
+		cfg.ADTClient = sys.Client
+		cfg.ADTUsername = sys.Username
+		cfg.ADTPassword = sys.Password
+		logger.Info("Starting ABAPer REST server",
+			zap.String("port", port),
+			zap.String("sap_host", sys.Host),
+			zap.String("sap_client", sys.Client),
+			zap.String("sap_user", sys.Username))
+	} else {
+		logger.Info("Starting ABAPer REST server in multi-system mode", zap.String("port", port))
 	}
 
 	srv := server.NewRestServerWithPool(cfg, logger, pool, staticClient)
 
 	fmt.Printf("ABAPer REST server listening on http://localhost:%s\n", port)
-	fmt.Printf("SAP system: %s (%s, client %s)\n", sys.Name, sys.Host, sys.Client)
+	if sys != nil {
+		fmt.Printf("SAP system: %s (%s, client %s)\n", sys.Name, sys.Host, sys.Client)
+	} else {
+		fmt.Println("SAP system: none — multi-system mode (credentials via X-SAP-* headers)")
+	}
 	fmt.Println("Press Ctrl+C to stop.")
 
 	srv.Start(port)
