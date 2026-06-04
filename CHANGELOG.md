@@ -2,6 +2,25 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.8.0](https://github.com/bluefunda/abaper/compare/v1.7.1...v1.8.0) (2026-06-04)
+
+
+### Features
+
+* **adt:** add FormatSource (ABAP pretty-printer) to Go ADT SDK ([#59](https://github.com/bluefunda/abaper/issues/59)) ([22a0d37](https://github.com/bluefunda/abaper/commit/22a0d37213dc774f4eafd9c7e13d53270519509f))
+* **adt:** add GetDDLSource (CDS/DDLS) to Go ADT SDK ([#65](https://github.com/bluefunda/abaper/issues/65)) ([8c2c1f7](https://github.com/bluefunda/abaper/commit/8c2c1f79312b660d0671973019ed34e1dc15be0d))
+* **adt:** add GetTransportInfo and CreateTransport to Go ADT SDK ([#61](https://github.com/bluefunda/abaper/issues/61)) ([cdb114e](https://github.com/bluefunda/abaper/commit/cdb114ef410319f5bd70406e87f100e486112dd5))
+* **adt:** add UpdateFunction and UpdateFunctionGroup to Go ADT SDK ([#63](https://github.com/bluefunda/abaper/issues/63)) ([182ac07](https://github.com/bluefunda/abaper/commit/182ac070cd9190fff45154024b18946333d9aea0))
+* **rest:** abaper-ts parity — 8 new endpoints, SDK stubs, serve command ([#68](https://github.com/bluefunda/abaper/issues/68)) ([423a6be](https://github.com/bluefunda/abaper/commit/423a6be883dbb1d3828a29c254f2459f0b6b79fc))
+
+
+### Bug Fixes
+
+* **adt:** endpoint and parser fixes for 100% abaper-ts parity ([#69](https://github.com/bluefunda/abaper/issues/69)) ([c788dd8](https://github.com/bluefunda/abaper/commit/c788dd89f119aa701d343fdf308231d8da231032))
+* **ci:** remove unsupported continue-on-error from release-notes job ([#53](https://github.com/bluefunda/abaper/issues/53)) ([3388ef2](https://github.com/bluefunda/abaper/commit/3388ef2bece2d1f015d6c325c0a675286e77b29f))
+* **commands:** rename slash commands to avoid built-in skill conflicts ([#55](https://github.com/bluefunda/abaper/issues/55)) ([3ce30a1](https://github.com/bluefunda/abaper/commit/3ce30a15c675f296059574159faa4a1b8a710a29))
+* **commands:** use 2&gt;&1 instead of 2>/dev/null in plan and work ([#56](https://github.com/bluefunda/abaper/issues/56)) ([bbdcd45](https://github.com/bluefunda/abaper/commit/bbdcd4547545e18f056b093032b16c1f0abe6457))
+
 ## [1.7.1](https://github.com/bluefunda/abaper/compare/v1.7.0...v1.7.1) (2026-05-29)
 
 
