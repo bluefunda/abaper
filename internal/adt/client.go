@@ -37,7 +37,7 @@ const (
 	programsCreateEndpoint  = "/programs/programs"
 	classesCreateEndpoint   = "/oo/classes"
 	tableContentsEndpoint      = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
-	formatEndpoint             = "/repository/formatters/format"
+	formatEndpoint             = "/abapsource/prettyprinter"
 	transportInfoSuffix        = "/transportinfo"
 	createTransportSuffix      = "/transports"
 	interfacesCreateEndpoint   = "/oo/interfaces"
@@ -2780,8 +2780,13 @@ func (c *ADTClientImpl) GetCompletionProposals(ctx context.Context, objectType, 
 		zap.Int("line", line),
 		zap.Int("column", column))
 
+	// SAP ADT codecompletion requires the source URI (with /source/main suffix),
+	// not the object URI, and responds with application/vnd.sap.as+xml.
+	adtPath := strings.TrimPrefix(uri, "/sap/bc/adt")
+	sourceURI := "/sap/bc/adt" + adtPath + "/source/main"
+
 	reqURL := fmt.Sprintf("%s/abapsource/codecompletion/proposal?uri=%s&line=%d&column=%d&sap-client=%s&sap-language=%s",
-		c.baseURL, url.QueryEscape(uri), line, column, c.config.Client, c.config.Language)
+		c.baseURL, url.QueryEscape(sourceURI), line, column, c.config.Client, c.config.Language)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(source))
 	if err != nil {
@@ -2789,8 +2794,8 @@ func (c *ADTClientImpl) GetCompletionProposals(ctx context.Context, objectType, 
 	}
 
 	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("Accept", "application/xml")
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	req.Header.Set("Accept", "application/vnd.sap.as+xml")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
 	resp, err := c.doRequest(req)
@@ -2863,8 +2868,14 @@ func (c *ADTClientImpl) GetNavigationTarget(ctx context.Context, objectType, obj
 		zap.Int("line", line),
 		zap.Int("column", column))
 
-	reqURL := fmt.Sprintf("%s/navigation/target?uri=%s&line=%d&column=%d&sap-client=%s&sap-language=%s",
-		c.baseURL, url.QueryEscape(uri), line, column, c.config.Client, c.config.Language)
+	// SAP ADT navigation uses the source URI with a fragment specifying cursor
+	// position: #start=LINE,COL;end=LINE,COL (same col for single-point cursor).
+	adtPath := strings.TrimPrefix(uri, "/sap/bc/adt")
+	sourceURI := "/sap/bc/adt" + adtPath + "/source/main"
+	uriWithFragment := fmt.Sprintf("%s#start=%d,%d;end=%d,%d", sourceURI, line, column, line, column)
+
+	reqURL := fmt.Sprintf("%s/navigation/target?uri=%s&filter=definition&sap-client=%s&sap-language=%s",
+		c.baseURL, url.QueryEscape(uriWithFragment), c.config.Client, c.config.Language)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(source))
 	if err != nil {
@@ -2873,7 +2884,7 @@ func (c *ADTClientImpl) GetNavigationTarget(ctx context.Context, objectType, obj
 
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("Accept", "application/xml")
+	req.Header.Set("Accept", "application/*")
 	req.Header.Set("X-CSRF-Token", c.csrfToken)
 
 	resp, err := c.doRequest(req)
@@ -2919,7 +2930,7 @@ func (c *ADTClientImpl) FormatSource(ctx context.Context, source string) (string
 	}
 
 	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set("Accept", "text/plain")
 
 	resp, err := c.doRequest(req)
@@ -3000,6 +3011,13 @@ func (c *ADTClientImpl) GetTransportInfo(ctx context.Context, objectType, object
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		// The /transportinfo endpoint is not available on all SAP versions.
+		// Fall back to POST /cts/transportchecks, which is the approach used
+		// by abap-adt-api and works across SAP versions.
+		return c.getTransportInfoViaCTS(ctx, objectName, basePath)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get transport info failed: HTTP %d - %s", resp.StatusCode, string(body))
 	}
@@ -3011,6 +3029,93 @@ func (c *ADTClientImpl) GetTransportInfo(ctx context.Context, objectType, object
 
 	result := &types.ADTTransportInfo{
 		ObjectName: parsed.ObjectName,
+		Package:    parsed.Package,
+		Transports: make([]types.ADTTransportEntry, len(parsed.Transports)),
+	}
+	for i, t := range parsed.Transports {
+		result.Transports[i] = types.ADTTransportEntry{
+			Number:      t.Number,
+			Description: t.Description,
+			Owner:       t.Owner,
+			Status:      t.Status,
+			Type:        t.Type,
+			Target:      t.Target,
+			Date:        t.Date,
+		}
+	}
+	return result, nil
+}
+
+// lockXML parses the LOCK_HANDLE and CORRNR from the lock response.
+// ctsTransportChecksMediaType is the SAP-specific media type for the CTS transport check API.
+const ctsTransportChecksMediaType = "application/vnd.sap.as+xml; charset=UTF-8; dataname=com.sap.adt.transport.service.checkData"
+
+// ctsCheckResponse XML structures for parsing POST /cts/transportchecks response.
+// The actual SAP response uses the path: asx:values>DATA>REQUESTS>CTS_REQUEST>REQ_HEADER
+type ctsCheckResponse struct {
+	Transports []ctsTransport `xml:"values>DATA>REQUESTS>CTS_REQUEST>REQ_HEADER"`
+	Package    string         `xml:"values>DATA>DEVCLASS"`
+	ObjectName string         `xml:"values>DATA>OBJECTNAME"`
+}
+
+type ctsTransport struct {
+	Number      string `xml:"TRKORR"`
+	Description string `xml:"AS4TEXT"`
+	Owner       string `xml:"AS4USER"`
+	Status      string `xml:"TRSTATUS"`
+	Type        string `xml:"TRFUNCTION"`
+	Target      string `xml:"TARSYSTEM"`
+	Date        string `xml:"AS4DATE"`
+}
+
+// getTransportInfoViaCTS uses POST /sap/bc/adt/cts/transportchecks to get
+// transport info. This is the endpoint used by abap-adt-api and works across
+// SAP versions where the per-object /transportinfo endpoint is unavailable.
+func (c *ADTClientImpl) getTransportInfoViaCTS(ctx context.Context, objectName, basePath string) (*types.ADTTransportInfo, error) {
+	// Build the full SAP ADT URI for this object
+	objectURI := "/sap/bc/adt" + basePath
+
+	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+    <DATA>
+      <DEVCLASS/>
+      <OPERATION>I</OPERATION>
+      <URI>%s</URI>
+    </DATA>
+  </asx:values>
+</asx:abap>`, escapeXML(objectURI))
+
+	reqURL := fmt.Sprintf("%s/cts/transportchecks?sap-client=%s&sap-language=%s",
+		c.baseURL, c.config.Client, c.config.Language)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(xmlBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CTS request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", ctsTransportChecksMediaType)
+	req.Header.Set("Accept", ctsTransportChecksMediaType)
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("CTS transport check request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("CTS transport check failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+
+	var parsed ctsCheckResponse
+	if err := xml.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse CTS transport check response: %w", err)
+	}
+
+	result := &types.ADTTransportInfo{
+		ObjectName: objectName,
 		Package:    parsed.Package,
 		Transports: make([]types.ADTTransportEntry, len(parsed.Transports)),
 	}
