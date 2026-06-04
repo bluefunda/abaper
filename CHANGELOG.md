@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.9.0](https://github.com/bluefunda/abaper/compare/v1.8.0...v1.9.0) (2026-06-04)
+
+
+### Features
+
+* **serve:** allow starting without static SAP credentials ([#70](https://github.com/bluefunda/abaper/issues/70)) ([caa81bd](https://github.com/bluefunda/abaper/commit/caa81bd65583e54b636d78e2b7752e6edc8bc797))
+
 ## [1.8.0](https://github.com/bluefunda/abaper/compare/v1.7.1...v1.8.0) (2026-06-04)
 
 
