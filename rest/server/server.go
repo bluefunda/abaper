@@ -249,6 +249,8 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		result, err = c.GetTable(ctx, objectName)
 	case "DDLS", "DATA_DEFINITION":
 		result, err = c.GetDDLSource(ctx, objectName)
+	case "FUNCTIONGROUP", "FUGR":
+		result, err = c.GetFunctionGroup(ctx, objectName)
 	case "PACKAGE", "PACK":
 		result, err = c.GetPackageContents(ctx, objectName)
 	default:
