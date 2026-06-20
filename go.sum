@@ -16,6 +16,8 @@ github.com/aymerick/douceur v0.2.0 h1:Mv+mAeH1Q+n9Fr+oyamOlAkUNPWPlA8PPGR0QAaYuP
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=
 github.com/bluefunda/banner v0.1.0 h1:VDH0OQIua3VjHb2KcsYLukXupFY+4tpQ1MBEOEFQR+Y=
 github.com/bluefunda/banner v0.1.0/go.mod h1:M5mtbgvRhaWJ++YScYqA1dNnc19WKm3Ne0rDmZoobo4=
+github.com/bluefunda/go-update v0.1.0 h1:/1uT2OUTJpvoPU44BfNYDcW3YI2c+Ktlb7p6+qJaYFY=
+github.com/bluefunda/go-update v0.1.0/go.mod h1:OXECIVc6XVlW22jDsF9g9GyPrj/Maqu5nBBwYii1d5A=
 github.com/charmbracelet/bubbles v1.0.0 h1:12J8/ak/uCZEMQ6KU7pcfwceyjLlWsDLAxB5fXonfvc=
 github.com/charmbracelet/bubbles v1.0.0/go.mod h1:9d/Zd5GdnauMI5ivUIVisuEm3ave1XwXtD1ckyV6r3E=
 github.com/charmbracelet/bubbletea v1.3.10 h1:otUDHWMMzQSB0Pkc87rm691KZ3SWa4KUlvF9nRvCICw=

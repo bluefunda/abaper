@@ -54,6 +54,7 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(systemCmd)
+	rootCmd.AddCommand(updateCmd)
 }
 
 func Execute() error {
