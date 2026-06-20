@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.10.0](https://github.com/bluefunda/abaper/compare/v1.9.1...v1.10.0) (2026-06-20)
+
+
+### Features
+
+* **update:** add `abaper update` self-update command ([#75](https://github.com/bluefunda/abaper/issues/75)) ([3cefd68](https://github.com/bluefunda/abaper/commit/3cefd6866e5d2ae0b5577f167516b673370e286f))
+
 ## [1.9.1](https://github.com/bluefunda/abaper/compare/v1.9.0...v1.9.1) (2026-06-04)
 
 
