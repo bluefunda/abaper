@@ -11,12 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
 
-	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
 	"github.com/bluefunda/abaper/styles"
 	"github.com/bluefunda/abaper/tui/slash"
+	"github.com/bluefunda/bluefunda-ai/sdk/agent"
 )
 
 // ── message types ──────────────────────────────────────────────────────────
@@ -43,11 +42,8 @@ type chatMessage struct {
 // ── tea messages ───────────────────────────────────────────────────────────
 
 type streamChunkMsg struct{ content string }
-type streamToolMsg  struct {
-	name, status string
-	durationMs   int
-}
-type streamDoneMsg struct{ err error }
+type streamToolMsg  struct{ name string }
+type streamDoneMsg  struct{ err error }
 
 // ── layout constants ───────────────────────────────────────────────────────
 
@@ -71,11 +67,11 @@ type chatModel struct {
 
 	streaming    bool
 	cancelStream context.CancelFunc
-	streamCh     chan client.ChatEvent
+	streamCh     chan agent.Event
+	currentCh    chan agent.Event // written by runner's OnEvent; swapped per message
+	runner       *agent.Runner
 
-	chatID    string
-	model     string
-	isNewChat bool
+	model string
 
 	slashOpen bool
 	slashMenu *slash.MenuModel
@@ -98,22 +94,33 @@ func newChatModel(version string) *chatModel {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(styles.ColorAccent)
 
-	loggedIn := false
-	if _, err := config.LoadTokens(); err == nil {
-		loggedIn = true
+	m := &chatModel{
+		version:  version,
+		spinner:  sp,
+		textarea: ta,
+		model:    "auto",
 	}
 
-	m := &chatModel{
-		version:   version,
-		spinner:   sp,
-		textarea:  ta,
-		chatID:    uuid.New().String(),
-		model:     "groq:openai/gpt-oss-120b",
-		isNewChat: true,
-	}
+	// Runner is created once per TUI session. OnEvent writes to m.currentCh,
+	// which sendMessage replaces before each Run() call — no race because
+	// BubbleTea's update loop is single-threaded and streaming must finish
+	// before the next message can be submitted.
+	m.runner = agent.New(agent.Options{
+		Model:    m.model,
+		MaxTurns: 1,
+		OnEvent: func(ev agent.Event) {
+			if ch := m.currentCh; ch != nil {
+				select {
+				case ch <- ev:
+				default:
+				}
+			}
+		},
+	})
+	m.runner.WithSystemPrompt("You are an ABAP expert assistant.")
 
 	m.messages = []chatMessage{{kind: kindLogo}}
-	if !loggedIn {
+	if _, err := config.LoadTokens(); err != nil {
 		m.messages = append(m.messages, chatMessage{
 			kind:    kindSystem,
 			content: "Not logged in — run `abaper login` to authenticate.",
@@ -254,7 +261,7 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 		return m, m.waitForStream()
 
 	case streamToolMsg:
-		m.upsertTool(ev.name, ev.status, ev.durationMs)
+		m.upsertTool(ev.name, "running", 0)
 		m.rebuildViewport()
 		return m, m.waitForStream()
 
@@ -314,43 +321,21 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 	m.streaming = true
 	m.rebuildViewport()
 
-	ch := make(chan client.ChatEvent, 64)
+	ch := make(chan agent.Event, 64)
+	m.currentCh = ch // runner's OnEvent closure writes here
 	m.streamCh = ch
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelStream = cancel
 
-	isNew := m.isNewChat
-	m.isNewChat = false
-
-	chatID := m.chatID
-	model := m.model
-
 	go func() {
-		defer close(ch)
+		defer func() {
+			m.currentCh = nil
+			close(ch)
+		}()
 
-		c, err := client.NewClient()
-		if err != nil {
-			ch <- client.ChatEvent{Type: "error", Error: err.Error()}
-			return
-		}
-
-		req := client.ChatRequest{
-			Prompt:    input,
-			Model:     model,
-			AgentName: "abaper",
-			IsNewChat: isNew,
-		}
-
-		err = c.StreamChat(ctx, chatID, req, func(ev client.ChatEvent) {
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-			}
-		})
-
-		if err != nil && ctx.Err() == nil {
-			ch <- client.ChatEvent{Type: "error", Error: err.Error()}
+		if err := m.runner.Run(ctx, input); err != nil && ctx.Err() == nil {
+			ch <- agent.Event{Type: "error", Err: err}
 		}
 	}()
 
@@ -366,18 +351,18 @@ func (m *chatModel) waitForStream() tea.Cmd {
 				return streamDoneMsg{}
 			}
 			switch ev.Type {
-			case "stream_chunk":
-				if ev.Content != "" {
-					return streamChunkMsg{content: ev.Content}
+			case "text":
+				if ev.Text != "" {
+					return streamChunkMsg{content: ev.Text}
 				}
-			case "stream_tool_execution":
-				return streamToolMsg{name: ev.ToolName, status: ev.Status, durationMs: ev.DurationMs}
-			case "stream_end":
+			case "tool_use":
+				return streamToolMsg{name: ev.ToolName}
+			case "result":
 				return streamDoneMsg{}
-			case "error", "stream_error":
-				msg := ev.Error
-				if msg == "" {
-					msg = ev.Message
+			case "error":
+				var msg string
+				if ev.Err != nil {
+					msg = ev.Err.Error()
 				}
 				return streamDoneMsg{err: fmt.Errorf("%s", msg)}
 			}
