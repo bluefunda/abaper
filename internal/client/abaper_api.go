@@ -1,14 +1,11 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/bluefunda/abaper/internal/config"
@@ -401,88 +398,6 @@ func (c *Client) PackageContents(packageName string) ([]map[string]any, error) {
 	return result.Objects, nil
 }
 
-// ChatEvent represents a single event from the AI chat SSE stream.
-type ChatEvent struct {
-	Type          string `json:"type"`
-	Content       string `json:"content,omitempty"`
-	FullContent   string `json:"full_content,omitempty"`
-	Error         string `json:"error,omitempty"`
-	Message       string `json:"message,omitempty"`
-	SessionID     string `json:"session_id,omitempty"`
-	ToolName      string `json:"tool_name,omitempty"`
-	Status        string `json:"status,omitempty"`
-	DurationMs    int    `json:"duration_ms,omitempty"`
-	ResultSummary string `json:"result_summary,omitempty"`
-}
-
-// ChatRequest is the request body for AI chat.
-type ChatRequest struct {
-	Prompt    string `json:"prompt"`
-	Model     string `json:"model"`
-	AgentName string `json:"agentName"`
-	IsNewChat bool   `json:"isNewChat"`
-}
-
-// StreamChat sends a prompt to the AI chat endpoint and streams SSE events.
-func (c *Client) StreamChat(ctx context.Context, chatID string, req ChatRequest, handler func(ChatEvent)) error {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return fmt.Errorf("marshal chat request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.BaseURL+"/abaper/ai/chats/"+chatID, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	httpReq.Header.Set("Authorization", "Bearer "+c.Token)
-	httpReq.Header.Set("X-Realm", c.Realm)
-	if c.SAPHost != "" {
-		httpReq.Header.Set("X-SAP-Host", c.SAPHost)
-		httpReq.Header.Set("X-SAP-Client", c.SAPClient)
-		httpReq.Header.Set("X-SAP-User", c.SAPUser)
-		httpReq.Header.Set("X-SAP-Password", c.SAPPassword)
-	}
-
-	sseClient := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := sseClient.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("chat request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		text, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("chat API error %d: %s", resp.StatusCode, string(text))
-	}
-
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		payload := strings.TrimPrefix(line, "data: ")
-		if payload == "[DONE]" {
-			break
-		}
-
-		var event ChatEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
-		}
-		handler(event)
-
-		if event.Type == "stream_end" || event.Type == "error" || event.Type == "stream_error" {
-			break
-		}
-	}
-
-	return scanner.Err()
-}
 
 // ChatTitle generates a title for a chat session.
 func (c *Client) ChatTitle(chatID, prompt string) (string, error) {
