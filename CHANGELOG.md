@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.11.0](https://github.com/bluefunda/abaper/compare/v1.10.0...v1.11.0) (2026-06-24)
+
+
+### Features
+
+* **ai:** replace HTTP SSE gateway chat with bluefunda-ai embedded SDK ([#80](https://github.com/bluefunda/abaper/issues/80)) ([8317a78](https://github.com/bluefunda/abaper/commit/8317a78932f647762dfbeeebf2972ca1432a3553))
+
 ## [1.10.0](https://github.com/bluefunda/abaper/compare/v1.9.1...v1.10.0) (2026-06-20)
 
 
