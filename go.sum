@@ -16,8 +16,8 @@ github.com/aymerick/douceur v0.2.0 h1:Mv+mAeH1Q+n9Fr+oyamOlAkUNPWPlA8PPGR0QAaYuP
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=
 github.com/bluefunda/banner v0.1.0 h1:VDH0OQIua3VjHb2KcsYLukXupFY+4tpQ1MBEOEFQR+Y=
 github.com/bluefunda/banner v0.1.0/go.mod h1:M5mtbgvRhaWJ++YScYqA1dNnc19WKm3Ne0rDmZoobo4=
-github.com/bluefunda/bluefunda-ai v1.25.0 h1:GnyIh9wKMyI91n/zs64ncLjvU19LbuqC9rDLtNS7P8M=
-github.com/bluefunda/bluefunda-ai v1.25.0/go.mod h1:nalIor3juYX6S93nNKI+4nd7ew7nXGsf2s65sy+VtOs=
+github.com/bluefunda/bluefunda-ai v1.34.0 h1:ScmxNa2h4GGh5NqixLlBXOkYnRe5hvi4lfxjMz3VyyU=
+github.com/bluefunda/bluefunda-ai v1.34.0/go.mod h1:nalIor3juYX6S93nNKI+4nd7ew7nXGsf2s65sy+VtOs=
 github.com/bluefunda/go-update v0.1.1 h1:sW7b5qQigHFBhwjBhVkIXSma0FtXo0iUvDuZ28OmkX0=
 github.com/bluefunda/go-update v0.1.1/go.mod h1:OXECIVc6XVlW22jDsF9g9GyPrj/Maqu5nBBwYii1d5A=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
