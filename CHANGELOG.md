@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.15.1](https://github.com/bluefunda/abaper/compare/v1.15.0...v1.15.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **adt:** use adtcore:-prefixed XML for DDIC property object activation ([#105](https://github.com/bluefunda/abaper/issues/105)) ([27b55bb](https://github.com/bluefunda/abaper/commit/27b55bbd6deeede07156283fc351b8f24f96bc7e))
+
 ## [1.15.0](https://github.com/bluefunda/abaper/compare/v1.14.0...v1.15.0) (2026-07-02)
 
 
