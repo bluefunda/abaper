@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.11.1](https://github.com/bluefunda/abaper/compare/v1.11.0...v1.11.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **list:** repair list objects/packages against REST server ([#87](https://github.com/bluefunda/abaper/issues/87)) ([3fe2af3](https://github.com/bluefunda/abaper/commit/3fe2af3aa890b5d4941ebb2a0cb51fbeb66b0534))
+
 ## [1.11.0](https://github.com/bluefunda/abaper/compare/v1.10.0...v1.11.0) (2026-06-24)
 
 
