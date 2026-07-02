@@ -61,10 +61,10 @@ func runListObjects(cmd *cobra.Command, args []string) error {
 		}
 		for _, obj := range objects {
 			parts := []string{}
-			if t, ok := obj["object_type"]; ok {
+			if t, ok := obj["type"]; ok {
 				parts = append(parts, fmt.Sprintf("%v", t))
 			}
-			if n, ok := obj["object_name"]; ok {
+			if n, ok := obj["name"]; ok {
 				parts = append(parts, fmt.Sprintf("%v", n))
 			}
 			fmt.Println(strings.Join(parts, "\t"))
@@ -97,10 +97,10 @@ func runListPackages(cmd *cobra.Command, args []string) error {
 		}
 		for _, obj := range objects {
 			parts := []string{}
-			if t, ok := obj["object_type"]; ok {
+			if t, ok := obj["type"]; ok {
 				parts = append(parts, fmt.Sprintf("%v", t))
 			}
-			if n, ok := obj["object_name"]; ok {
+			if n, ok := obj["name"]; ok {
 				parts = append(parts, fmt.Sprintf("%v", n))
 			}
 			fmt.Println(strings.Join(parts, "\t"))
