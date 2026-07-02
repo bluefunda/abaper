@@ -43,8 +43,7 @@ func TestNew_SkipConnectReturnsClient(t *testing.T) {
 	if client == nil {
 		t.Fatal("expected a non-nil client")
 	}
-	// The concrete client must satisfy the full public interface.
-	var _ types.ADTClient = client
+	// New returns the public types.ADTClient interface directly.
 	if client.IsAuthenticated() {
 		t.Error("expected client to be unauthenticated when SkipConnect is set")
 	}
@@ -60,7 +59,6 @@ func TestNewFromConfig(t *testing.T) {
 	if client == nil {
 		t.Fatal("expected a non-nil client")
 	}
-	var _ types.ADTClient = client
 }
 
 func TestOrDefault(t *testing.T) {
