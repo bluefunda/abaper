@@ -253,6 +253,10 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		result, err = c.GetDDLSource(ctx, objectName)
 	case "FUNCTIONGROUP", "FUGR":
 		result, err = c.GetFunctionGroup(ctx, objectName)
+	case "DOMAIN", "DOMA":
+		result, err = c.GetTypeInfo(ctx, objectName)
+	case "DATA_ELEMENT", "DTEL":
+		result, err = c.GetTypeInfo(ctx, objectName)
 	case "PACKAGE", "PACK":
 		result, err = c.GetPackageContents(ctx, objectName)
 	default:
@@ -318,6 +322,12 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 			saveErr = c.UpdateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), req.Source)
 		case "FUNCTIONGROUP", "FUGR":
 			saveErr = c.UpdateFunctionGroup(ctx, objectName, req.Source)
+		case "TABLE", "TABL":
+			saveErr = c.UpdateTable(ctx, objectName, req.Source)
+		case "STRUCTURE", "STRU":
+			saveErr = c.UpdateStructure(ctx, objectName, req.Source)
+		case "DDLS", "DATA_DEFINITION":
+			saveErr = c.UpdateDDLS(ctx, objectName, req.Source)
 		default:
 			rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
 			return
@@ -370,6 +380,14 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		err = c.CreateTable(ctx, objectName, description, sourceCode)
 	case "FUNCTIONGROUP", "FUGR":
 		err = c.CreateFunctionGroup(ctx, objectName, description, sourceCode)
+	case "FUNCTION", "FUNC":
+		if len(req.Args) == 0 {
+			rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
+			return
+		}
+		err = c.CreateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), description, sourceCode)
+	case "DDLS", "DATA_DEFINITION":
+		err = c.CreateDDLS(ctx, objectName, description, sourceCode)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -579,6 +597,12 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 		err = c.UpdateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), req.Source)
 	case "FUNCTIONGROUP", "FUGR":
 		err = c.UpdateFunctionGroup(ctx, objectName, req.Source)
+	case "TABLE", "TABL":
+		err = c.UpdateTable(ctx, objectName, req.Source)
+	case "STRUCTURE", "STRU":
+		err = c.UpdateStructure(ctx, objectName, req.Source)
+	case "DDLS", "DATA_DEFINITION":
+		err = c.UpdateDDLS(ctx, objectName, req.Source)
 	default:
 		rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
 		return

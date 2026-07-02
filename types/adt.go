@@ -188,12 +188,17 @@ type SourceWriter interface {
 	CreateStructure(ctx context.Context, name, description, source string) error
 	CreateTable(ctx context.Context, name, description, source string) error
 	CreateFunctionGroup(ctx context.Context, name, description, source string) error
+	CreateFunction(ctx context.Context, name, functionGroup, description, source string) error
+	CreateDDLS(ctx context.Context, name, description, source string) error
 	UpdateProgram(ctx context.Context, name, source string) error
 	UpdateClass(ctx context.Context, name, source string) error
 	UpdateInclude(ctx context.Context, name, source string) error
 	UpdateInterface(ctx context.Context, name, source string) error
 	UpdateFunction(ctx context.Context, functionName, functionGroup, source string) error
 	UpdateFunctionGroup(ctx context.Context, name, source string) error
+	UpdateTable(ctx context.Context, name, source string) error
+	UpdateStructure(ctx context.Context, name, source string) error
+	UpdateDDLS(ctx context.Context, name, source string) error
 }
 
 // PackageNode is a single entry returned by the nodestructure endpoint.

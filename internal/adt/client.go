@@ -30,7 +30,7 @@ const (
 	structuresEndpoint      = "/ddic/structures/%s/source/main"
 	includesEndpoint        = "/programs/includes/%s/source/main"
 	interfacesEndpoint      = "/oo/interfaces/%s/source/main"
-	domainsEndpoint         = "/ddic/domains/%s/source/main"
+	domainsEndpoint         = "/ddic/domains/%s"
 	dataElementsEndpoint    = "/ddic/dataelements/%s"
 	ddlSourcesEndpoint      = "/ddic/ddl/sources/%s/source/main"
 	searchEndpoint = "/repository/informationsystem/search"
@@ -720,7 +720,7 @@ func (c *ADTClientImpl) GetTypeInfo(ctx context.Context, typeName string) (*type
 
 	// First try as domain
 	domainURL := fmt.Sprintf("%s"+domainsEndpoint, c.baseURL, typeName)
-	if source, err := c.getTypeSource(ctx, domainURL, "text/plain"); err == nil {
+	if source, err := c.getTypeSource(ctx, domainURL, "application/*"); err == nil {
 		return &types.ADTTypeInfo{
 			TypeName:   typeName,
 			TypeKind:   "DOMAIN",
@@ -731,7 +731,7 @@ func (c *ADTClientImpl) GetTypeInfo(ctx context.Context, typeName string) (*type
 
 	// If domain fails, try as data element
 	dataElementURL := fmt.Sprintf("%s"+dataElementsEndpoint, c.baseURL, typeName)
-	if source, err := c.getTypeSource(ctx, dataElementURL, "application/xml"); err == nil {
+	if source, err := c.getTypeSource(ctx, dataElementURL, "application/*"); err == nil {
 		return &types.ADTTypeInfo{
 			TypeName:   typeName,
 			TypeKind:   "DATA_ELEMENT",
@@ -1204,8 +1204,8 @@ func (c *ADTClientImpl) CreateInterface(ctx context.Context, name, description, 
 }
 
 type functionGroupCreatePayload struct {
-	XMLName     xml.Name        `xml:"fgroup:functionGroup"`
-	FgroupNS    string          `xml:"xmlns:fgroup,attr"`
+	XMLName     xml.Name        `xml:"group:abapFunctionGroup"`
+	FgroupNS    string          `xml:"xmlns:group,attr"`
 	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
 	Description string          `xml:"adtcore:description,attr"`
 	Name        string          `xml:"adtcore:name,attr"`
@@ -1221,7 +1221,7 @@ func (c *ADTClientImpl) CreateFunctionGroup(ctx context.Context, name, descripti
 		AdtcoreNS:   "http://www.sap.com/adt/core",
 		Description: description,
 		Name:        name,
-		Type:        "FUGR/FF",
+		Type:        "FUGR/F",
 		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
 		PackageRef:  classPackageRef{Name: "$TMP"},
 	}
@@ -1237,6 +1237,55 @@ func (c *ADTClientImpl) CreateFunctionGroup(ctx context.Context, name, descripti
 		"/functions/groups/"+nameLower,
 		"/functions/groups/"+nameLower+"/source/main",
 		"FUGR", name, source, source != "")
+}
+
+type functionContainerRef struct {
+	Name string `xml:"adtcore:name,attr"`
+	Type string `xml:"adtcore:type,attr"`
+	URI  string `xml:"adtcore:uri,attr"`
+}
+
+type functionModuleCreatePayload struct {
+	XMLName      xml.Name             `xml:"fmodule:abapFunctionModule"`
+	FmoduleNS    string               `xml:"xmlns:fmodule,attr"`
+	AdtcoreNS    string               `xml:"xmlns:adtcore,attr"`
+	Description  string               `xml:"adtcore:description,attr"`
+	Name         string               `xml:"adtcore:name,attr"`
+	Type         string               `xml:"adtcore:type,attr"`
+	ContainerRef functionContainerRef `xml:"adtcore:containerRef"`
+}
+
+// CreateFunction creates a new function module (FUGR/FF) within an existing function group.
+func (c *ADTClientImpl) CreateFunction(ctx context.Context, name, functionGroup, description, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	functionGroup = strings.ToUpper(strings.TrimSpace(functionGroup))
+	if functionGroup == "" {
+		return fmt.Errorf("function group is required to create a function module")
+	}
+	groupLower := strings.ToLower(functionGroup)
+	payload := functionModuleCreatePayload{
+		FmoduleNS:   "http://www.sap.com/adt/functions/fmodules",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "FUGR/FF",
+		ContainerRef: functionContainerRef{
+			Name: functionGroup,
+			Type: "FUGR/F",
+			URI:  "/sap/bc/adt/functions/groups/" + groupLower,
+		},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal function module metadata: %w", err)
+	}
+	createEndpoint := fmt.Sprintf("/functions/groups/%s/fmodules", groupLower)
+	if err := c.createObjectMetadata(ctx, createEndpoint, xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create function module %s in group %s: %w", name, functionGroup, err)
+	}
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/functions/groups/%s/fmodules/%s", groupLower, nameLower)
+	return c.createAndPopulate(ctx, createEndpoint, objectPath, objectPath+"/source/main", "FUGR/FF", name, source, source != "")
 }
 
 type includeCreatePayload struct {
@@ -2445,6 +2494,101 @@ func (c *ADTClientImpl) UpdateFunctionGroup(ctx context.Context, name, source st
 	return nil
 }
 
+// updateSourceObject is the shared lock -> setObjectSource -> unlock flow used
+// by all source-text-based Update* methods.
+func (c *ADTClientImpl) updateSourceObject(ctx context.Context, kindLabel, objectPath, sourcePath, name, source string) error {
+	if !c.IsAuthenticated() {
+		return fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+	if name == "" {
+		return fmt.Errorf("%s name cannot be empty", kindLabel)
+	}
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf("source code cannot be empty")
+	}
+
+	c.logger.Info("Updating "+kindLabel, zap.String("name", name), zap.Int("source_length", len(source)))
+
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
+	if err != nil {
+		return fmt.Errorf("failed to lock %s: %w", kindLabel, err)
+	}
+	defer func() {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock "+kindLabel, zap.String("name", name), zap.Error(unlockErr))
+		}
+	}()
+
+	if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
+		return fmt.Errorf("failed to update %s source: %w", kindLabel, err)
+	}
+
+	c.logger.Info(strings.ToUpper(kindLabel[:1])+kindLabel[1:]+" updated successfully", zap.String("name", name))
+	return nil
+}
+
+// UpdateTable updates an existing ABAP DDIC table's (TABL/DT) source.
+func (c *ADTClientImpl) UpdateTable(ctx context.Context, name, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/ddic/tables/%s", nameLower)
+	return c.updateSourceObject(ctx, "table", objectPath, objectPath+"/source/main", name, source)
+}
+
+// UpdateStructure updates an existing ABAP DDIC structure's (TABL/DS) source.
+func (c *ADTClientImpl) UpdateStructure(ctx context.Context, name, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/ddic/structures/%s", nameLower)
+	return c.updateSourceObject(ctx, "structure", objectPath, objectPath+"/source/main", name, source)
+}
+
+// ddlSourceCreatePayload is the create-shell body for a CDS view (DDLS/DF).
+type ddlSourceCreatePayload struct {
+	XMLName     xml.Name        `xml:"ddl:ddlSource"`
+	DdlNS       string          `xml:"xmlns:ddl,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
+}
+
+// CreateDDLS creates a new CDS view (data definition, DDLS/DF) via ADT.
+func (c *ADTClientImpl) CreateDDLS(ctx context.Context, name, description, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := ddlSourceCreatePayload{
+		DdlNS:       "http://www.sap.com/adt/ddic/ddlsources",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        "DDLS/DF",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal CDS view metadata: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, "/ddic/ddl/sources", xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create CDS view %s: %w", name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, "/ddic/ddl/sources",
+		"/ddic/ddl/sources/"+nameLower,
+		"/ddic/ddl/sources/"+nameLower+"/source/main",
+		"DDLS", name, source, source != "")
+}
+
+// UpdateDDLS updates an existing CDS view's (DDLS/DF) source.
+func (c *ADTClientImpl) UpdateDDLS(ctx context.Context, name, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/ddic/ddl/sources/%s", nameLower)
+	return c.updateSourceObject(ctx, "CDS view", objectPath, objectPath+"/source/main", name, source)
+}
+
 // objectTypeToURI maps an object type and name to the ADT URI path
 func objectTypeToURI(objectType, objectName string) (string, error) {
 	name := strings.ToLower(objectName)
@@ -2455,12 +2599,16 @@ func objectTypeToURI(objectType, objectName string) (string, error) {
 		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name), nil
 	case "INTF", "INTERFACE":
 		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name), nil
-	case "FUGR", "FUNCTION_GROUP":
+	case "FUGR", "FUNCTION_GROUP", "FUNCTIONGROUP":
 		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s", name), nil
 	case "INCL", "INCLUDE":
 		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", name), nil
 	case "DDLS", "DATA_DEFINITION":
 		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", name), nil
+	case "TABL", "TABLE":
+		return fmt.Sprintf("/sap/bc/adt/ddic/tables/%s", name), nil
+	case "STRU", "STRUCTURE":
+		return fmt.Sprintf("/sap/bc/adt/ddic/structures/%s", name), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for activation: %s", objectType)
 	}
