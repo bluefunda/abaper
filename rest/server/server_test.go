@@ -110,6 +110,51 @@ func TestGetObjectHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("domain", func(t *testing.T) {
+		var gotType string
+		fake := &fakeADTClient{
+			getTypeInfoFn: func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error) {
+				gotType = typeName
+				return &types.ADTTypeInfo{TypeName: typeName, TypeKind: "DOMAIN"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "domain",
+			"object_name": "zwels",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotType != "ZWELS" {
+			t.Errorf("expected uppercased type name passed through, got %q", gotType)
+		}
+		data := decodeSuccess[types.ADTTypeInfo](t, rec)
+		if data.TypeKind != "DOMAIN" {
+			t.Errorf("expected TypeKind DOMAIN, got %q", data.TypeKind)
+		}
+	})
+
+	t.Run("data element", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getTypeInfoFn: func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error) {
+				return &types.ADTTypeInfo{TypeName: typeName, TypeKind: "DATA_ELEMENT"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "data_element",
+			"object_name": "zdtel_tims",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTTypeInfo](t, rec)
+		if data.TypeKind != "DATA_ELEMENT" {
+			t.Errorf("expected TypeKind DATA_ELEMENT, got %q", data.TypeKind)
+		}
+	})
+
 	t.Run("missing fields", func(t *testing.T) {
 		rs := newTestServer(t, &fakeADTClient{})
 		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{"object_type": "program"})
@@ -179,12 +224,82 @@ func TestCreateObjectHandler(t *testing.T) {
 	t.Run("unsupported type", func(t *testing.T) {
 		rs := newTestServer(t, &fakeADTClient{})
 		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
-			"object_type": "function",
+			"object_type": "bogus",
 			"object_name": "x",
+			"description": "force create path, not save-mode",
 		})
-		// FUNCTION has no creation case in the handler switch (only update).
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("function module requires group in args", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+			"description": "test FM",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("function module create with group", func(t *testing.T) {
+		var gotName, gotGroup string
+		fake := &fakeADTClient{
+			createFunctionFn: func(ctx context.Context, name, functionGroup, description, source string) error {
+				gotName, gotGroup = name, functionGroup
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]any{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+			"description": "test FM",
+			"args":        []string{"zabpb_fg1"},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_FM1" || gotGroup != "ZABPB_FG1" {
+			t.Errorf("expected name=ZABPB_FM1 group=ZABPB_FG1, got name=%q group=%q", gotName, gotGroup)
+		}
+	})
+
+	t.Run("function group create", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "functiongroup",
+			"object_name": "zabpb_fg1",
+			"description": "test FG",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("ddls create", func(t *testing.T) {
+		var gotName, gotSource string
+		fake := &fakeADTClient{
+			createDDLSFn: func(ctx context.Context, name, description, source string) error {
+				gotName, gotSource = name, source
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "ddls",
+			"object_name": "zabpb_cds1",
+			"description": "test CDS",
+			"source":      "define view ZABPB_CDS1 as select from t000 { key mandt }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_CDS1" || gotSource == "" {
+			t.Errorf("expected name=ZABPB_CDS1 with source, got name=%q source=%q", gotName, gotSource)
 		}
 	})
 }
@@ -222,6 +337,107 @@ func TestSaveObjectHandler(t *testing.T) {
 		})
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("updates table", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			updateTableFn: func(ctx context.Context, name, source string) error {
+				gotName = name
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "table",
+			"object_name": "zabpbt1",
+			"source":      "define table zabpbt1 { key client : mandt not null; }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPBT1" {
+			t.Errorf("expected uppercased name, got %q", gotName)
+		}
+	})
+
+	t.Run("updates structure", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateStructureFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "structure",
+			"object_name": "zabpbs1",
+			"source":      "define structure zabpbs1 { id : abap.char(10); }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateStructure to be called")
+		}
+	})
+
+	t.Run("updates ddls", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateDDLSFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "ddls",
+			"object_name": "zabpb_cds1",
+			"source":      "define view ZABPB_CDS1 as select from t000 { key mandt }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateDDLS to be called")
+		}
+	})
+
+	t.Run("updates function module", func(t *testing.T) {
+		var gotName, gotGroup string
+		fake := &fakeADTClient{
+			updateFunctionFn: func(ctx context.Context, functionName, functionGroup, source string) error {
+				gotName, gotGroup = functionName, functionGroup
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]any{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+			"source":      "FUNCTION zabpb_fm1.\nENDFUNCTION.",
+			"args":        []string{"zabpb_fg1"},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_FM1" || gotGroup != "ZABPB_FG1" {
+			t.Errorf("expected name=ZABPB_FM1 group=ZABPB_FG1, got name=%q group=%q", gotName, gotGroup)
+		}
+	})
+
+	t.Run("function module requires group in args", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+			"source":      "FUNCTION zabpb_fm1.\nENDFUNCTION.",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

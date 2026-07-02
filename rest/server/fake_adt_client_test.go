@@ -20,8 +20,15 @@ type fakeADTClient struct {
 	searchObjectsFn      func(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error)
 	updateProgramFn      func(ctx context.Context, name, source string) error
 	updateClassFn        func(ctx context.Context, name, source string) error
+	updateFunctionFn     func(ctx context.Context, functionName, functionGroup, source string) error
+	updateTableFn        func(ctx context.Context, name, source string) error
+	updateStructureFn    func(ctx context.Context, name, source string) error
+	updateDDLSFn         func(ctx context.Context, name, source string) error
 	createProgramFn      func(ctx context.Context, name, description, packageName, source string) error
 	createClassFn        func(ctx context.Context, name, description, packageName, source string) error
+	createFunctionFn     func(ctx context.Context, name, functionGroup, description, source string) error
+	createDDLSFn         func(ctx context.Context, name, description, source string) error
+	getTypeInfoFn        func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error)
 	activateObjectFn     func(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error)
 	runUnitTestsFn       func(ctx context.Context, objectType, objectName string) (*types.UnitTestResult, error)
 	syntaxCheckFn        func(ctx context.Context, objectType, objectName, source string) (*types.SyntaxCheckResult, error)
@@ -101,6 +108,18 @@ func (f *fakeADTClient) CreateTable(ctx context.Context, name, description, sour
 func (f *fakeADTClient) CreateFunctionGroup(ctx context.Context, name, description, source string) error {
 	return nil
 }
+func (f *fakeADTClient) CreateFunction(ctx context.Context, name, functionGroup, description, source string) error {
+	if f.createFunctionFn != nil {
+		return f.createFunctionFn(ctx, name, functionGroup, description, source)
+	}
+	return nil
+}
+func (f *fakeADTClient) CreateDDLS(ctx context.Context, name, description, source string) error {
+	if f.createDDLSFn != nil {
+		return f.createDDLSFn(ctx, name, description, source)
+	}
+	return nil
+}
 func (f *fakeADTClient) UpdateProgram(ctx context.Context, name, source string) error {
 	if f.updateProgramFn != nil {
 		return f.updateProgramFn(ctx, name, source)
@@ -118,9 +137,30 @@ func (f *fakeADTClient) UpdateInterface(ctx context.Context, name, source string
 	return nil
 }
 func (f *fakeADTClient) UpdateFunction(ctx context.Context, functionName, functionGroup, source string) error {
+	if f.updateFunctionFn != nil {
+		return f.updateFunctionFn(ctx, functionName, functionGroup, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) UpdateFunctionGroup(ctx context.Context, name, source string) error {
+	return nil
+}
+func (f *fakeADTClient) UpdateTable(ctx context.Context, name, source string) error {
+	if f.updateTableFn != nil {
+		return f.updateTableFn(ctx, name, source)
+	}
+	return nil
+}
+func (f *fakeADTClient) UpdateStructure(ctx context.Context, name, source string) error {
+	if f.updateStructureFn != nil {
+		return f.updateStructureFn(ctx, name, source)
+	}
+	return nil
+}
+func (f *fakeADTClient) UpdateDDLS(ctx context.Context, name, source string) error {
+	if f.updateDDLSFn != nil {
+		return f.updateDDLSFn(ctx, name, source)
+	}
 	return nil
 }
 
@@ -191,6 +231,9 @@ func (f *fakeADTClient) FormatSource(ctx context.Context, source string) (string
 }
 
 func (f *fakeADTClient) GetTypeInfo(ctx context.Context, typeName string) (*types.ADTTypeInfo, error) {
+	if f.getTypeInfoFn != nil {
+		return f.getTypeInfoFn(ctx, typeName)
+	}
 	return &types.ADTTypeInfo{TypeName: typeName}, nil
 }
 func (f *fakeADTClient) GetTransaction(ctx context.Context, transactionName string) (*types.ADTTransactionInfo, error) {
