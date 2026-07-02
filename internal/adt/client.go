@@ -2830,10 +2830,44 @@ func (c *ADTClientImpl) setPropertiesAndActivate(ctx context.Context, objectType
 	if err := c.unlockObject(ctx, objectPath, lockHandle); err != nil {
 		return fmt.Errorf("failed to unlock %s: %w", name, err)
 	}
-	if _, err := c.ActivateObject(ctx, objectType, name); err != nil {
+	if err := c.activateDDICPropertyObject(ctx, objectPath, name); err != nil {
 		return fmt.Errorf("failed to activate %s: %w", name, err)
 	}
 	c.logger.Info("DDIC property object saved and activated", zap.String("type", objectType), zap.String("name", name))
+	return nil
+}
+
+// activateDDICPropertyObject sends the adtcore:-prefixed activation XML that SAP
+// requires for DDIC property objects (domains, data elements). The generic
+// ActivateObject emits a default-namespace form that produces an empty worklist
+// for these types, so they never reach version="active".
+func (c *ADTClientImpl) activateDDICPropertyObject(ctx context.Context, objectPath, name string) error {
+	adtURI := fmt.Sprintf("/sap/bc/adt%s", objectPath)
+	payload := fmt.Sprintf(
+		`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+
+			`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">`+
+			`<adtcore:objectReference adtcore:uri="%s" adtcore:name="%s"/>`+
+			`</adtcore:objectReferences>`,
+		adtURI, strings.ToUpper(name),
+	)
+	activateURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
+	req, err := http.NewRequestWithContext(ctx, "POST", activateURL, strings.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("failed to create activation request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	req.Header.Set("Accept", "application/*")
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return fmt.Errorf("activation request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
 
