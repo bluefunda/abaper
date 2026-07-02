@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.12.0](https://github.com/bluefunda/abaper/compare/v1.11.1...v1.12.0) (2026-07-02)
+
+
+### Features
+
+* **rest:** abaper-ts parity — activate alias, save-mode create, packages/contents ([#92](https://github.com/bluefunda/abaper/issues/92)) ([7baa0bd](https://github.com/bluefunda/abaper/commit/7baa0bdf92950ba8f52f0e5bee558da583193e48))
+
 ## [1.11.1](https://github.com/bluefunda/abaper/compare/v1.11.0...v1.11.1) (2026-07-02)
 
 
