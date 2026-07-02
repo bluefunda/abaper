@@ -401,7 +401,10 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 	rs.sendSuccess(w, results)
 }
 
-// listObjectsHandler handles object listing requests (CLI list command equivalent)
+// listObjectsHandler handles object listing requests (CLI list command equivalent).
+// Two modes: object_type=packages/package searches package names by pattern;
+// otherwise package is required and returns that package's contents, optionally
+// filtered by object_type (e.g. "PROG" or "PROG/P").
 func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -414,11 +417,6 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.ObjectType == "" {
-		rs.sendError(w, "object_type is required", http.StatusBadRequest)
-		return
-	}
-
 	c, err := rs.clientForRequest(r)
 	if err != nil {
 		rs.sendError(w, err.Error(), http.StatusUnauthorized)
@@ -426,26 +424,51 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	listType := strings.ToLower(req.ObjectType)
-	pattern := req.ObjectName
-	if pattern == "" {
-		pattern = "*"
-	}
 
-	rs.logger.Info("Listing objects via REST API",
-		zap.String("type", listType),
-		zap.String("pattern", pattern))
-
-	switch listType {
-	case "packages", "package":
+	if listType == "packages" || listType == "package" {
+		pattern := req.ObjectName
+		if pattern == "" {
+			pattern = "*"
+		}
+		rs.logger.Info("Listing packages via REST API", zap.String("pattern", pattern))
 		packages, err := c.ListPackages(r.Context(), pattern)
 		if err != nil {
 			rs.sendError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		rs.sendSuccess(w, packages)
-	default:
-		rs.sendError(w, "unsupported list type: "+listType, http.StatusBadRequest)
+		return
 	}
+
+	if req.Package == "" {
+		rs.sendError(w, "package is required (or object_type=packages to search package names)", http.StatusBadRequest)
+		return
+	}
+
+	rs.logger.Info("Listing package contents via REST API",
+		zap.String("package", req.Package),
+		zap.String("type_filter", req.ObjectType))
+
+	pkg, err := c.GetPackageContents(r.Context(), strings.ToUpper(req.Package))
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	objects := pkg.Objects
+	if req.ObjectType != "" {
+		filterType := strings.ToUpper(req.ObjectType)
+		filtered := make([]types.ADTObject, 0, len(objects))
+		for _, obj := range objects {
+			objType := strings.ToUpper(obj.Type)
+			if objType == filterType || strings.HasPrefix(objType, filterType+"/") {
+				filtered = append(filtered, obj)
+			}
+		}
+		objects = filtered
+	}
+
+	rs.sendSuccess(w, objects)
 }
 
 func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) {

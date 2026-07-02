@@ -327,7 +327,7 @@ func (c *Client) GatewayVersion() (map[string]string, error) {
 	return result, nil
 }
 
-// ListObjects lists ABAP objects in a package.
+// ListObjects lists ABAP objects in a package, optionally filtered by type.
 func (c *Client) ListObjects(packageName, objectType string) ([]map[string]any, error) {
 	body := map[string]string{}
 	if packageName != "" {
@@ -337,15 +337,11 @@ func (c *Client) ListObjects(packageName, objectType string) ([]map[string]any, 
 		body["object_type"] = objectType
 	}
 
-	type ListResult struct {
-		Objects []map[string]any `json:"Objects"`
-	}
-
-	result, err := Post[ListResult](c, "/api/v1/objects/list", body)
+	result, err := Post[[]map[string]any](c, "/api/v1/objects/list", body)
 	if err != nil {
 		return nil, err
 	}
-	return result.Objects, nil
+	return *result, nil
 }
 
 // RunUnitTests executes ABAP unit tests for an object.
@@ -384,14 +380,15 @@ func (c *Client) Navigation(objectName, objectType, source string, line, column 
 // PackageContents lists the contents of a package.
 func (c *Client) PackageContents(packageName string) ([]map[string]any, error) {
 	body := map[string]string{
-		"package": packageName,
+		"object_type": "package",
+		"object_name": packageName,
 	}
 
 	type PkgResult struct {
-		Objects []map[string]any `json:"Objects"`
+		Objects []map[string]any `json:"objects"`
 	}
 
-	result, err := Post[PkgResult](c, "/api/v1/packages/contents", body)
+	result, err := Post[PkgResult](c, "/api/v1/objects/get", body)
 	if err != nil {
 		return nil, err
 	}
