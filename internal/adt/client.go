@@ -594,7 +594,9 @@ func (c *ADTClientImpl) GetNodeContents(ctx context.Context, packageName string)
 	}
 
 	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/xml")
+	// SAP ADT's nodestructure endpoint only negotiates application/vnd.sap.as+xml;
+	// a plain application/xml Accept header is rejected with HTTP 406.
+	req.Header.Set("Accept", "application/vnd.sap.as+xml")
 
 	resp, err := c.doRequest(req)
 	if err != nil {
@@ -615,8 +617,29 @@ func (c *ADTClientImpl) GetNodeContents(ctx context.Context, packageName string)
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	// ADT nodestructure XML: two distinct response formats are observed in the wild.
-	// We parse a flexible envelope that covers both attribute-style and element-style variants.
+	result, err := parseNodeStructureXML(responseBody)
+	if err != nil {
+		return nil, err
+	}
+
+	c.logger.Info("Node contents retrieved",
+		zap.String("package", packageName),
+		zap.Int("nodes", len(result.Nodes)),
+		zap.Int("object_types", len(result.ObjectTypes)))
+
+	return result, nil
+}
+
+// parseNodeStructureXML parses a SAP ADT nodestructure response.
+//
+// The endpoint responds with application/vnd.sap.as+xml, an ABAP serialization
+// wrapped in <asx:abap><asx:values><DATA>. Repository objects live under
+// TREE_CONTENT/SEU_ADT_REPOSITORY_OBJ_NODE and the type descriptors under
+// OBJECT_TYPES/SEU_ADT_OBJECT_TYPE_INFO. Element local names are matched
+// (namespace prefixes like asx: are ignored by encoding/xml). Virtual folder /
+// category placeholder rows (empty OBJECT_NAME) are skipped — callers want
+// addressable repository objects.
+func parseNodeStructureXML(body []byte) (*types.PackageContentsResult, error) {
 	type xmlObjectType struct {
 		Type  string `xml:"OBJECT_TYPE"`
 		Label string `xml:"OBJECT_TYPE_LABEL"`
@@ -629,18 +652,21 @@ func (c *ADTClientImpl) GetNodeContents(ctx context.Context, packageName string)
 		Expandable  string `xml:"EXPANDABLE"` // "X" or "" in ABAP-style XML
 	}
 	type xmlEnvelope struct {
-		XMLName     xml.Name        `xml:"nodeStructure"`
-		ObjectTypes []xmlObjectType `xml:"objectTypeDescriptions>objectTypeDescription"`
-		Nodes       []xmlNode       `xml:"objectNodes>SEU_ADT_REPOSITORY_OBJ_NODE"`
+		XMLName     xml.Name        `xml:"abap"`
+		Nodes       []xmlNode       `xml:"values>DATA>TREE_CONTENT>SEU_ADT_REPOSITORY_OBJ_NODE"`
+		ObjectTypes []xmlObjectType `xml:"values>DATA>OBJECT_TYPES>SEU_ADT_OBJECT_TYPE_INFO"`
 	}
 
 	var envelope xmlEnvelope
-	if err := xml.Unmarshal(responseBody, &envelope); err != nil {
+	if err := xml.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("parse nodestructure response: %w", err)
 	}
 
 	nodes := make([]types.PackageNode, 0, len(envelope.Nodes))
 	for _, n := range envelope.Nodes {
+		if n.Name == "" {
+			continue
+		}
 		nodes = append(nodes, types.PackageNode{
 			Name:        n.Name,
 			Type:        n.Type,
@@ -657,11 +683,6 @@ func (c *ADTClientImpl) GetNodeContents(ctx context.Context, packageName string)
 			Label: ot.Label,
 		})
 	}
-
-	c.logger.Info("Node contents retrieved",
-		zap.String("package", packageName),
-		zap.Int("nodes", len(nodes)),
-		zap.Int("object_types", len(objectTypes)))
 
 	return &types.PackageContentsResult{
 		Nodes:       nodes,
@@ -1079,6 +1100,10 @@ func (c *ADTClientImpl) createObjectMetadata(ctx context.Context, endpoint, xmlP
 	}
 	c.addAuthHeaders(req)
 	req.Header.Set("Content-Type", "application/*")
+	// Override the default atomsvc Accept from addAuthHeaders: DDIC "blue"
+	// creation endpoints reject application/atomsvc+xml with HTTP 406, while
+	// the permissive application/* is accepted across all creatable types.
+	req.Header.Set("Accept", "application/*")
 	resp, err := c.doRequest(req)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
@@ -1250,18 +1275,59 @@ func (c *ADTClientImpl) CreateInclude(ctx context.Context, name, description, so
 		"INCL", name, source, source != "")
 }
 
-// CreateStructure creates a new ABAP structure (DDIC).
-// SAP ADT does not expose a direct HTTP creation endpoint for DDIC structures;
-// they must be created through the DDIC workbench. This returns a clear error.
-func (c *ADTClientImpl) CreateStructure(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("CreateStructure: SAP ADT does not support programmatic DDIC structure creation via REST — use transaction SE11")
+// ddicBlueCreatePayload is the create-shell body for source-based DDIC objects
+// (tables and structures), which SAP models as "blue" workbench sources. It
+// mirrors abap-adt-api's createBodySimple for these types.
+type ddicBlueCreatePayload struct {
+	XMLName     xml.Name        `xml:"blue:blueSource"`
+	BlueNS      string          `xml:"xmlns:blue,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
 }
 
-// CreateTable creates a new ABAP table (DDIC).
-// SAP ADT does not expose a direct HTTP creation endpoint for DDIC tables;
-// they must be created through the DDIC workbench. This returns a clear error.
+// createDDICBlueSource creates a source-based DDIC object (structure or table)
+// using the same create-shell → write-source → activate flow abaper-ts relies on
+// (via abap-adt-api). SAP ADT *does* expose these endpoints — the object is
+// created at createEndpoint, then its DDL-style source is written to
+// objectBasePath+name+"/source/main". Activation runs only when source is given
+// (an empty DDIC shell cannot activate). Objects are created in $TMP.
+func (c *ADTClientImpl) createDDICBlueSource(ctx context.Context, typeID, createEndpoint, objectBasePath, name, description, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := ddicBlueCreatePayload{
+		BlueNS:      "http://www.sap.com/wbobj/blue",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: description,
+		Name:        name,
+		Type:        typeID,
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal %s metadata: %w", typeID, err)
+	}
+	if err := c.createObjectMetadata(ctx, createEndpoint, xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create %s %s: %w", typeID, name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, createEndpoint,
+		objectBasePath+nameLower,
+		objectBasePath+nameLower+"/source/main",
+		typeID, name, source, source != "")
+}
+
+// CreateStructure creates a new ABAP DDIC structure (TABL/DS) via ADT.
+func (c *ADTClientImpl) CreateStructure(ctx context.Context, name, description, source string) error {
+	return c.createDDICBlueSource(ctx, "TABL/DS", "/ddic/structures", "/ddic/structures/", name, description, source)
+}
+
+// CreateTable creates a new ABAP DDIC table (TABL/DT) via ADT.
 func (c *ADTClientImpl) CreateTable(ctx context.Context, name, description, source string) error {
-	return fmt.Errorf("CreateTable: SAP ADT does not support programmatic DDIC table creation via REST — use transaction SE11")
+	return c.createDDICBlueSource(ctx, "TABL/DT", "/ddic/tables", "/ddic/tables/", name, description, source)
 }
 
 // addAuthHeaders adds authentication and session headers to the request
@@ -1749,7 +1815,10 @@ func (c *ADTClientImpl) lockObject(ctx context.Context, objectPath string) (lock
 	}
 
 	c.addAuthHeaders(req)
-	req.Header.Set("Accept", "application/*")
+	// DDIC objects reject a bare application/* Accept on LOCK with HTTP 406; the
+	// ADT lock endpoint requires the lock.result media type. This header works
+	// for source-library objects too.
+	req.Header.Set("Accept", "application/*,application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result")
 	req.Header.Set("Content-Length", "0")
 
 	c.logger.Debug("Locking object", zap.String("object_path", objectPath), zap.String("url", url))
