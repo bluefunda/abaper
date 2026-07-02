@@ -83,8 +83,8 @@ func printObjectList(w io.Writer, objects []map[string]any, outputFmt, emptyMess
 	}
 
 	if len(objects) == 0 {
-		fmt.Fprintln(w, emptyMessage)
-		return nil
+		_, err := fmt.Fprintln(w, emptyMessage)
+		return err
 	}
 
 	for _, obj := range objects {
@@ -95,7 +95,9 @@ func printObjectList(w io.Writer, objects []map[string]any, outputFmt, emptyMess
 		if n, ok := obj["name"]; ok {
 			parts = append(parts, fmt.Sprintf("%v", n))
 		}
-		fmt.Fprintln(w, strings.Join(parts, "\t"))
+		if _, err := fmt.Fprintln(w, strings.Join(parts, "\t")); err != nil {
+			return err
+		}
 	}
 
 	return nil
