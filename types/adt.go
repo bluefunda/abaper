@@ -223,6 +223,44 @@ type PackageContentsResult struct {
 	ObjectTypes []PackageObjectType `json:"objectTypes"`
 }
 
+// DomainProperties describes a DDIC domain (DOMA/DD). Unlike source-text
+// objects, domains are defined by structured properties, not ABAP source.
+type DomainProperties struct {
+	Description    string `json:"description,omitempty"`
+	DataType       string `json:"data_type"`               // CHAR, NUMC, DEC, INT4, ...
+	Length         int    `json:"length"`                  // internal length
+	Decimals       int    `json:"decimals,omitempty"`      // for DEC/QUAN/CURR
+	OutputLength   int    `json:"output_length,omitempty"` // defaults to Length when 0
+	ConversionExit string `json:"conversion_exit,omitempty"`
+	LowerCase      bool   `json:"lowercase,omitempty"`
+}
+
+// DataElementProperties describes a DDIC data element (DTEL/DE). A data element
+// is either domain-based (set DomainName) or built on a predefined ABAP type
+// (set DataType/Length/Decimals).
+type DataElementProperties struct {
+	Description  string `json:"description,omitempty"`
+	DomainName   string `json:"domain_name,omitempty"` // typeKind=domain when set
+	DataType     string `json:"data_type,omitempty"`   // typeKind=predefinedAbapType otherwise
+	Length       int    `json:"length,omitempty"`
+	Decimals     int    `json:"decimals,omitempty"`
+	ShortLabel   string `json:"short_label,omitempty"`
+	MediumLabel  string `json:"medium_label,omitempty"`
+	LongLabel    string `json:"long_label,omitempty"`
+	HeadingLabel string `json:"heading_label,omitempty"`
+}
+
+// DDICPropertyWriter creates and updates DDIC objects that are defined by
+// structured properties rather than ABAP source text (domains, data elements).
+// These follow a distinct create-shell -> lock -> set-properties -> unlock ->
+// activate flow (activation must follow unlock, unlike source-text objects).
+type DDICPropertyWriter interface {
+	CreateDomain(ctx context.Context, name string, props DomainProperties) error
+	UpdateDomain(ctx context.Context, name string, props DomainProperties) error
+	CreateDataElement(ctx context.Context, name string, props DataElementProperties) error
+	UpdateDataElement(ctx context.Context, name string, props DataElementProperties) error
+}
+
 // PackageBrowser searches and navigates package contents.
 type PackageBrowser interface {
 	SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*ADTSearchResult, error)
@@ -260,6 +298,7 @@ type ADTClient interface {
 	SessionManager
 	SourceReader
 	SourceWriter
+	DDICPropertyWriter
 	PackageBrowser
 	ObjectActivator
 	LangFeatures

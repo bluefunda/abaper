@@ -28,6 +28,10 @@ type fakeADTClient struct {
 	createClassFn        func(ctx context.Context, name, description, packageName, source string) error
 	createFunctionFn     func(ctx context.Context, name, functionGroup, description, source string) error
 	createDDLSFn         func(ctx context.Context, name, description, source string) error
+	createDomainFn       func(ctx context.Context, name string, props types.DomainProperties) error
+	updateDomainFn       func(ctx context.Context, name string, props types.DomainProperties) error
+	createDataElementFn  func(ctx context.Context, name string, props types.DataElementProperties) error
+	updateDataElementFn  func(ctx context.Context, name string, props types.DataElementProperties) error
 	getTypeInfoFn        func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error)
 	activateObjectFn     func(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error)
 	runUnitTestsFn       func(ctx context.Context, objectType, objectName string) (*types.UnitTestResult, error)
@@ -160,6 +164,30 @@ func (f *fakeADTClient) UpdateStructure(ctx context.Context, name, source string
 func (f *fakeADTClient) UpdateDDLS(ctx context.Context, name, source string) error {
 	if f.updateDDLSFn != nil {
 		return f.updateDDLSFn(ctx, name, source)
+	}
+	return nil
+}
+func (f *fakeADTClient) CreateDomain(ctx context.Context, name string, props types.DomainProperties) error {
+	if f.createDomainFn != nil {
+		return f.createDomainFn(ctx, name, props)
+	}
+	return nil
+}
+func (f *fakeADTClient) UpdateDomain(ctx context.Context, name string, props types.DomainProperties) error {
+	if f.updateDomainFn != nil {
+		return f.updateDomainFn(ctx, name, props)
+	}
+	return nil
+}
+func (f *fakeADTClient) CreateDataElement(ctx context.Context, name string, props types.DataElementProperties) error {
+	if f.createDataElementFn != nil {
+		return f.createDataElementFn(ctx, name, props)
+	}
+	return nil
+}
+func (f *fakeADTClient) UpdateDataElement(ctx context.Context, name string, props types.DataElementProperties) error {
+	if f.updateDataElementFn != nil {
+		return f.updateDataElementFn(ctx, name, props)
 	}
 	return nil
 }

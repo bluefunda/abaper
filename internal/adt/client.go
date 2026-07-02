@@ -2589,6 +2589,277 @@ func (c *ADTClientImpl) UpdateDDLS(ctx context.Context, name, source string) err
 	return c.updateSourceObject(ctx, "CDS view", objectPath, objectPath+"/source/main", name, source)
 }
 
+// --- DDIC property objects (domains, data elements) ---
+//
+// Domains and data elements are not source-text objects: they are defined by
+// structured properties. The flow, verified live against SAP ADT, is:
+//   create-shell (POST) -> lock -> PUT properties -> unlock -> activate.
+// Activation must happen AFTER unlock (SAP rejects activation of a locked DDIC
+// property object with "User X is currently editing"), which is why this does
+// not reuse createAndPopulate (that activates while holding the lock).
+
+type domainTypeInfo struct {
+	Datatype string `xml:"doma:datatype"`
+	Length   int    `xml:"doma:length"`
+	Decimals int    `xml:"doma:decimals"`
+}
+
+type domainOutputInfo struct {
+	Length         int    `xml:"doma:length"`
+	Style          string `xml:"doma:style"`
+	ConversionExit string `xml:"doma:conversionExit"`
+	SignExists     bool   `xml:"doma:signExists"`
+	Lowercase      bool   `xml:"doma:lowercase"`
+	AmpmFormat     bool   `xml:"doma:ampmFormat"`
+}
+
+type domainContent struct {
+	TypeInfo   domainTypeInfo   `xml:"doma:typeInformation"`
+	OutputInfo domainOutputInfo `xml:"doma:outputInformation"`
+}
+
+type domainPayload struct {
+	XMLName     xml.Name        `xml:"doma:domain"`
+	DomaNS      string          `xml:"xmlns:doma,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Language    string          `xml:"adtcore:language,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Version     string          `xml:"adtcore:version,attr,omitempty"`
+	MasterLang  string          `xml:"adtcore:masterLanguage,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
+	Content     *domainContent  `xml:"doma:content"` // nil for the create shell
+}
+
+// CreateDomain creates a DDIC domain (DOMA/DD) with the given properties.
+func (c *ADTClientImpl) CreateDomain(ctx context.Context, name string, props types.DomainProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	shell := domainPayload{
+		DomaNS:      "http://www.sap.com/dictionary/domain",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: props.Description,
+		Language:    "EN",
+		Name:        name,
+		Type:        "DOMA/DD",
+		MasterLang:  "EN",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(shell)
+	if err != nil {
+		return fmt.Errorf("marshal domain shell: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, "/ddic/domains", xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create domain %s: %w", name, err)
+	}
+	return c.UpdateDomain(ctx, name, props)
+}
+
+// UpdateDomain sets the properties of an existing DDIC domain and activates it.
+func (c *ADTClientImpl) UpdateDomain(ctx context.Context, name string, props types.DomainProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	outputLen := props.OutputLength
+	if outputLen == 0 {
+		outputLen = props.Length
+	}
+	body := domainPayload{
+		DomaNS:      "http://www.sap.com/dictionary/domain",
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		Description: props.Description,
+		Language:    "EN",
+		Name:        name,
+		Type:        "DOMA/DD",
+		Version:     "inactive",
+		MasterLang:  "EN",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+		Content: &domainContent{
+			TypeInfo: domainTypeInfo{
+				Datatype: strings.ToUpper(strings.TrimSpace(props.DataType)),
+				Length:   props.Length,
+				Decimals: props.Decimals,
+			},
+			OutputInfo: domainOutputInfo{
+				Length:         outputLen,
+				Style:          "00",
+				ConversionExit: props.ConversionExit,
+				Lowercase:      props.LowerCase,
+			},
+		},
+	}
+	xmlBytes, err := xml.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal domain properties: %w", err)
+	}
+	return c.setPropertiesAndActivate(ctx, "DOMAIN", "/ddic/domains/"+strings.ToLower(name), name, xml.Header+string(xmlBytes))
+}
+
+type dataElementInner struct {
+	TypeKind         string `xml:"dtel:typeKind"`
+	TypeName         string `xml:"dtel:typeName"`
+	DataType         string `xml:"dtel:dataType"`
+	DataTypeLength   int    `xml:"dtel:dataTypeLength"`
+	DataTypeDecimals int    `xml:"dtel:dataTypeDecimals"`
+	ShortLabel       string `xml:"dtel:shortFieldLabel"`
+	ShortLength      int    `xml:"dtel:shortFieldLength"`
+	ShortMaxLength   int    `xml:"dtel:shortFieldMaxLength"`
+	MediumLabel      string `xml:"dtel:mediumFieldLabel"`
+	MediumLength     int    `xml:"dtel:mediumFieldLength"`
+	MediumMaxLength  int    `xml:"dtel:mediumFieldMaxLength"`
+	LongLabel        string `xml:"dtel:longFieldLabel"`
+	LongLength       int    `xml:"dtel:longFieldLength"`
+	LongMaxLength    int    `xml:"dtel:longFieldMaxLength"`
+	HeadingLabel     string `xml:"dtel:headingFieldLabel"`
+	HeadingLength    int    `xml:"dtel:headingFieldLength"`
+	HeadingMaxLength int    `xml:"dtel:headingFieldMaxLength"`
+	SearchHelp       string `xml:"dtel:searchHelp"`
+	SearchHelpParam  string `xml:"dtel:searchHelpParameter"`
+	SetGetParam      string `xml:"dtel:setGetParameter"`
+	DefaultComponent string `xml:"dtel:defaultComponentName"`
+	DeactInputHist   bool   `xml:"dtel:deactivateInputHistory"`
+	ChangeDocument   bool   `xml:"dtel:changeDocument"`
+	LeftToRight      bool   `xml:"dtel:leftToRightDirection"`
+	DeactBIDI        bool   `xml:"dtel:deactivateBIDIFiltering"`
+}
+
+type dataElementPayload struct {
+	XMLName     xml.Name          `xml:"blue:wbobj"`
+	AdtcoreNS   string            `xml:"xmlns:adtcore,attr"`
+	BlueNS      string            `xml:"xmlns:blue,attr"`
+	DtelNS      string            `xml:"xmlns:dtel,attr,omitempty"`
+	Description string            `xml:"adtcore:description,attr"`
+	Language    string            `xml:"adtcore:language,attr"`
+	Name        string            `xml:"adtcore:name,attr"`
+	Type        string            `xml:"adtcore:type,attr"`
+	Version     string            `xml:"adtcore:version,attr,omitempty"`
+	MasterLang  string            `xml:"adtcore:masterLanguage,attr"`
+	Responsible string            `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef   `xml:"adtcore:packageRef"`
+	DataElement *dataElementInner `xml:"dtel:dataElement"` // nil for the create shell
+}
+
+// CreateDataElement creates a DDIC data element (DTEL/DE) with the given properties.
+func (c *ADTClientImpl) CreateDataElement(ctx context.Context, name string, props types.DataElementProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	shell := dataElementPayload{
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		BlueNS:      "http://www.sap.com/wbobj/dictionary/dtel",
+		Description: props.Description,
+		Language:    "EN",
+		Name:        name,
+		Type:        "DTEL/DE",
+		MasterLang:  "EN",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(shell)
+	if err != nil {
+		return fmt.Errorf("marshal data element shell: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, "/ddic/dataelements", xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create data element %s: %w", name, err)
+	}
+	return c.UpdateDataElement(ctx, name, props)
+}
+
+// UpdateDataElement sets the properties of an existing data element and activates it.
+func (c *ADTClientImpl) UpdateDataElement(ctx context.Context, name string, props types.DataElementProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	inner := dataElementInner{
+		ShortLabel:   props.ShortLabel,
+		ShortLength:  10,
+		ShortMaxLength:   10,
+		MediumLabel:  props.MediumLabel,
+		MediumLength: 20,
+		MediumMaxLength:  20,
+		LongLabel:    props.LongLabel,
+		LongLength:   40,
+		LongMaxLength:    40,
+		HeadingLabel: props.HeadingLabel,
+		HeadingLength:    55,
+		HeadingMaxLength: 55,
+	}
+	if strings.TrimSpace(props.DomainName) != "" {
+		inner.TypeKind = "domain"
+		inner.TypeName = strings.ToUpper(strings.TrimSpace(props.DomainName))
+	} else {
+		inner.TypeKind = "predefinedAbapType"
+		inner.DataType = strings.ToUpper(strings.TrimSpace(props.DataType))
+		inner.DataTypeLength = props.Length
+		inner.DataTypeDecimals = props.Decimals
+	}
+	body := dataElementPayload{
+		AdtcoreNS:   "http://www.sap.com/adt/core",
+		BlueNS:      "http://www.sap.com/wbobj/dictionary/dtel",
+		DtelNS:      "http://www.sap.com/adt/dictionary/dataelements",
+		Description: props.Description,
+		Language:    "EN",
+		Name:        name,
+		Type:        "DTEL/DE",
+		Version:     "inactive",
+		MasterLang:  "EN",
+		Responsible: strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:  classPackageRef{Name: "$TMP"},
+		DataElement: &inner,
+	}
+	xmlBytes, err := xml.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal data element properties: %w", err)
+	}
+	return c.setPropertiesAndActivate(ctx, "DATA_ELEMENT", "/ddic/dataelements/"+strings.ToLower(name), name, xml.Header+string(xmlBytes))
+}
+
+// setPropertiesAndActivate runs the lock -> PUT properties -> unlock -> activate
+// flow shared by DDIC property objects. Activation happens after unlock.
+func (c *ADTClientImpl) setPropertiesAndActivate(ctx context.Context, objectType, objectPath, name, body string) error {
+	if !c.IsAuthenticated() {
+		return fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+	lockHandle, _, err := c.lockObject(ctx, objectPath)
+	if err != nil {
+		return fmt.Errorf("failed to lock %s: %w", name, err)
+	}
+	if err := c.putObjectProperties(ctx, objectPath, body, lockHandle); err != nil {
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock after property write error", zap.String("name", name), zap.Error(unlockErr))
+		}
+		return fmt.Errorf("failed to set properties for %s: %w", name, err)
+	}
+	if err := c.unlockObject(ctx, objectPath, lockHandle); err != nil {
+		return fmt.Errorf("failed to unlock %s: %w", name, err)
+	}
+	if _, err := c.ActivateObject(ctx, objectType, name); err != nil {
+		return fmt.Errorf("failed to activate %s: %w", name, err)
+	}
+	c.logger.Info("DDIC property object saved and activated", zap.String("type", objectType), zap.String("name", name))
+	return nil
+}
+
+// putObjectProperties PUTs a structured-properties XML body to a DDIC object URL
+// (not its /source/main), under an active lock.
+func (c *ADTClientImpl) putObjectProperties(ctx context.Context, objectPath, body, lockHandle string) error {
+	url := fmt.Sprintf("%s%s?lockHandle=%s", c.baseURL, objectPath, lockHandle)
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create properties request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	req.Header.Set("Accept", "application/*")
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return fmt.Errorf("properties request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("properties write failed: HTTP %d - %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
 // objectTypeToURI maps an object type and name to the ADT URI path
 func objectTypeToURI(objectType, objectName string) (string, error) {
 	name := strings.ToLower(objectName)
@@ -2609,6 +2880,10 @@ func objectTypeToURI(objectType, objectName string) (string, error) {
 		return fmt.Sprintf("/sap/bc/adt/ddic/tables/%s", name), nil
 	case "STRU", "STRUCTURE":
 		return fmt.Sprintf("/sap/bc/adt/ddic/structures/%s", name), nil
+	case "DOMA", "DOMAIN":
+		return fmt.Sprintf("/sap/bc/adt/ddic/domains/%s", name), nil
+	case "DTEL", "DATA_ELEMENT":
+		return fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", name), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for activation: %s", objectType)
 	}

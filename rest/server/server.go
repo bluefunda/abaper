@@ -388,6 +388,26 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		err = c.CreateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), description, sourceCode)
 	case "DDLS", "DATA_DEFINITION":
 		err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+	case "DOMAIN", "DOMA":
+		if req.DomainProperties == nil {
+			rs.sendError(w, "domain_properties is required to create a domain", http.StatusBadRequest)
+			return
+		}
+		props := *req.DomainProperties
+		if props.Description == "" {
+			props.Description = description
+		}
+		err = c.CreateDomain(ctx, objectName, props)
+	case "DATA_ELEMENT", "DTEL":
+		if req.DataElementProperties == nil {
+			rs.sendError(w, "data_element_properties is required to create a data element", http.StatusBadRequest)
+			return
+		}
+		props := *req.DataElementProperties
+		if props.Description == "" {
+			props.Description = description
+		}
+		err = c.CreateDataElement(ctx, objectName, props)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -568,8 +588,8 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.ObjectType == "" || req.ObjectName == "" || req.Source == "" {
-		rs.sendError(w, "object_type, object_name, and source are required", http.StatusBadRequest)
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
 		return
 	}
 	c, err := rs.clientForRequest(r)
@@ -580,6 +600,38 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 	objectType := strings.ToUpper(req.ObjectType)
 	objectName := strings.ToUpper(req.ObjectName)
 	ctx := r.Context()
+
+	// DDIC property objects (domain, data element) are updated via structured
+	// properties, not source text — handle them before the source requirement.
+	switch objectType {
+	case "DOMAIN", "DOMA":
+		if req.DomainProperties == nil {
+			rs.sendError(w, "domain_properties is required to update a domain", http.StatusBadRequest)
+			return
+		}
+		if err := c.UpdateDomain(ctx, objectName, *req.DomainProperties); err != nil {
+			rs.sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rs.sendSuccess(w, map[string]any{"object_name": objectName, "object_type": objectType, "message": fmt.Sprintf("%s %s saved successfully", objectType, objectName)})
+		return
+	case "DATA_ELEMENT", "DTEL":
+		if req.DataElementProperties == nil {
+			rs.sendError(w, "data_element_properties is required to update a data element", http.StatusBadRequest)
+			return
+		}
+		if err := c.UpdateDataElement(ctx, objectName, *req.DataElementProperties); err != nil {
+			rs.sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rs.sendSuccess(w, map[string]any{"object_name": objectName, "object_type": objectType, "message": fmt.Sprintf("%s %s saved successfully", objectType, objectName)})
+		return
+	}
+
+	if req.Source == "" {
+		rs.sendError(w, "source is required", http.StatusBadRequest)
+		return
+	}
 	switch objectType {
 	case "PROGRAM", "PROG":
 		err = c.UpdateProgram(ctx, objectName, req.Source)

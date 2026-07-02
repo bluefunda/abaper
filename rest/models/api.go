@@ -1,5 +1,7 @@
 package models
 
+import "github.com/bluefunda/abaper/types"
+
 // REST API request and response structures
 
 // APIRequest represents a generic API request
@@ -17,6 +19,10 @@ type APIRequest struct {
 	Args        []string          `json:"args,omitempty"`
 	Prompt      string            `json:"prompt,omitempty"`
 	Config      map[string]string `json:"config,omitempty"`
+
+	// Structured properties for DDIC objects that are not source-text based.
+	DomainProperties      *types.DomainProperties      `json:"domain_properties,omitempty"`
+	DataElementProperties *types.DataElementProperties `json:"data_element_properties,omitempty"`
 }
 
 // APIResponse is the standard response envelope. T is the data payload type.

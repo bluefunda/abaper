@@ -131,3 +131,32 @@ genuinely different, larger feature (new request/response types, no reuse of
 `lockObject`/`setObjectSource`/`createAndPopulate`). Recommend a separate
 follow-up issue/PR scoped specifically to this, rather than folding it into
 this change.
+
+## Follow-up (2026-07-02): Domain / Data Element create+update — WIP
+
+Branch `feat/ddic-domain-dtel-crud`. Implements `CreateDomain`/`UpdateDomain`/
+`CreateDataElement`/`UpdateDataElement` (types + `internal/adt` + REST wiring on
+create/save via `domain_properties`/`data_element_properties` request fields).
+
+**Live-proven manually (raw curl):** the full flow works —
+create-shell POST → lock → PUT structured properties → unlock → activate —
+verified end-to-end for both a domain (CHAR 10, `ZABPB_DOM1`) and a data element
+referencing it (`ZABPB_DTEL1`), both reaching `version="active"`. Findings:
+- Domains/data elements have NO `/source/main`; they use a plain-GET metadata
+  resource and a PUT of a structured XML body to the object URL.
+- Activation MUST happen AFTER unlock (locked activation → "User X is currently
+  editing").
+- The data-element PUT body is strict: every `dtel:*` element must be present in
+  the exact reference order, including the `*FieldMaxLength` elements.
+
+**Known open issue (why this isn't done):** through the Go path, create/update
+run without error and the properties PUT succeeds, but the object is left
+`version="new"` (inactive). The REST `activate` call returns `activated:true`
+yet SAP does not actually activate it — i.e. an empty activation worklist.
+Suspect the `ActivationRequest` XML shape (`<objectReferences xmlns=...>` with
+un-prefixed `objectReference`/`uri`/`name`) differs from the working manual body
+(`adtcore:`-prefixed `objectReferences`/`objectReference`/`uri`/`name`). Source
+objects activate fine with the current shape, so this only bites DDIC property
+objects. Next step: build the activation body with `adtcore:`-prefixed elements
+(matching the proven curl) for these types, or reuse the exact reference shape,
+then re-verify `version="active"` live.
