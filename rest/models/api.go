@@ -10,6 +10,7 @@ type APIRequest struct {
 	Description string            `json:"description,omitempty"`
 	Source      string            `json:"source,omitempty"`
 	Package     string            `json:"package,omitempty"`
+	PackageName string            `json:"package_name,omitempty"` // used by packages/contents
 	ETag        string            `json:"etag,omitempty"`
 	Line        int               `json:"line,omitempty"`
 	Column      int               `json:"column,omitempty"`

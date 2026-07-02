@@ -363,9 +363,10 @@ func TestActivateObjectHandler(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
-		data := decodeSuccess[types.ActivationResult](t, rec)
-		if !data.Success {
-			t.Errorf("expected activation success")
+		data := decodeSuccess[map[string]any](t, rec)
+		activated, _ := data["activated"].(bool)
+		if !activated {
+			t.Errorf("expected activated=true in response")
 		}
 	})
 
@@ -542,6 +543,114 @@ func TestVersionHandler(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
+}
+
+// --- /api/v1/activate alias (A) ---
+
+func TestActivateAlias(t *testing.T) {
+	rs := newTestServer(t, &fakeADTClient{})
+	rec := doJSON(t, rs, http.MethodPost, "/api/v1/activate", map[string]string{
+		"object_type": "program",
+		"object_name": "zfoo",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	data := decodeSuccess[map[string]any](t, rec)
+	if _, ok := data["activated"]; !ok {
+		t.Errorf("response missing 'activated' field; got %v", data)
+	}
+}
+
+// --- save-mode objects/create (B) ---
+
+func TestCreateObjectHandler_SaveMode(t *testing.T) {
+	t.Run("source without description triggers save", func(t *testing.T) {
+		var savedName, savedSource string
+		fake := &fakeADTClient{
+			updateProgramFn: func(_ context.Context, name, source string) error {
+				savedName = name
+				savedSource = source
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "program",
+			"object_name": "zfoo",
+			"source":      "REPORT zfoo.",
+			// description intentionally omitted
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[map[string]any](t, rec)
+		if created, _ := data["created"].(bool); created {
+			t.Error("expected created=false for save mode")
+		}
+		if si, _ := data["source_inserted"].(bool); !si {
+			t.Error("expected source_inserted=true")
+		}
+		if savedName != "ZFOO" || savedSource != "REPORT zfoo." {
+			t.Errorf("UpdateProgram called with name=%q source=%q", savedName, savedSource)
+		}
+	})
+
+	t.Run("source with description triggers create", func(t *testing.T) {
+		var createdName string
+		fake := &fakeADTClient{
+			createProgramFn: func(_ context.Context, name, _, _, _ string) error {
+				createdName = name
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "program",
+			"object_name": "zbar",
+			"description": "test program",
+			"source":      "REPORT zbar.",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[map[string]any](t, rec)
+		if created, _ := data["created"].(bool); !created {
+			t.Error("expected created=true for create mode")
+		}
+		if createdName != "ZBAR" {
+			t.Errorf("CreateProgram called with name=%q", createdName)
+		}
+	})
+}
+
+// --- packages/contents (C) ---
+
+func TestPackageContentsHandler(t *testing.T) {
+	t.Run("returns nodes and objectTypes", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/packages/contents", map[string]string{
+			"package_name": "ztest",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.PackageContentsResult](t, rec)
+		if len(data.Nodes) == 0 {
+			t.Error("expected at least one node from fake")
+		}
+		if len(data.ObjectTypes) == 0 {
+			t.Error("expected at least one objectType from fake")
+		}
+	})
+
+	t.Run("missing package_name returns 400", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/packages/contents", map[string]string{})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
 }
 
 // --- removed AI endpoints stay gone ---

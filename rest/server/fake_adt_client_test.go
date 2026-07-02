@@ -15,6 +15,7 @@ type fakeADTClient struct {
 
 	getProgramFn         func(ctx context.Context, name string) (*types.ADTSourceCode, error)
 	getPackageContentsFn func(ctx context.Context, name string) (*types.ADTPackage, error)
+	getNodeContentsFn    func(ctx context.Context, name string) (*types.PackageContentsResult, error)
 	listPackagesFn       func(ctx context.Context, pattern string) ([]types.ADTPackage, error)
 	searchObjectsFn      func(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error)
 	updateProgramFn      func(ctx context.Context, name, source string) error
@@ -140,6 +141,15 @@ func (f *fakeADTClient) GetPackageContents(ctx context.Context, name string) (*t
 		return f.getPackageContentsFn(ctx, name)
 	}
 	return &types.ADTPackage{Name: name}, nil
+}
+func (f *fakeADTClient) GetNodeContents(ctx context.Context, name string) (*types.PackageContentsResult, error) {
+	if f.getNodeContentsFn != nil {
+		return f.getNodeContentsFn(ctx, name)
+	}
+	return &types.PackageContentsResult{
+		Nodes:       []types.PackageNode{{Name: name, Type: "DEVC/K", Expandable: true, URI: "/sap/bc/adt/packages/" + name}},
+		ObjectTypes: []types.PackageObjectType{{Type: "DEVC/K", Label: "Packages"}},
+	}, nil
 }
 
 func (f *fakeADTClient) ActivateObject(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error) {
