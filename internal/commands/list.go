@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/bluefunda/abaper/internal/client"
@@ -52,26 +54,7 @@ func runListObjects(cmd *cobra.Command, args []string) error {
 	}
 
 	outputFmt, _ := cmd.Flags().GetString("output")
-	if outputFmt == "json" {
-		output.PrintJSON(objects)
-	} else {
-		if len(objects) == 0 {
-			fmt.Println("No objects found.")
-			return nil
-		}
-		for _, obj := range objects {
-			parts := []string{}
-			if t, ok := obj["type"]; ok {
-				parts = append(parts, fmt.Sprintf("%v", t))
-			}
-			if n, ok := obj["name"]; ok {
-				parts = append(parts, fmt.Sprintf("%v", n))
-			}
-			fmt.Println(strings.Join(parts, "\t"))
-		}
-	}
-
-	return nil
+	return printObjectList(os.Stdout, objects, outputFmt, "No objects found.")
 }
 
 func runListPackages(cmd *cobra.Command, args []string) error {
@@ -88,23 +71,31 @@ func runListPackages(cmd *cobra.Command, args []string) error {
 	}
 
 	outputFmt, _ := cmd.Flags().GetString("output")
+	return printObjectList(os.Stdout, objects, outputFmt, "No objects found in package.")
+}
+
+// printObjectList renders a list of ABAP objects (as returned by the ABAPer
+// API — keyed by "type" and "name") in text or JSON form.
+func printObjectList(w io.Writer, objects []map[string]any, outputFmt, emptyMessage string) error {
 	if outputFmt == "json" {
 		output.PrintJSON(objects)
-	} else {
-		if len(objects) == 0 {
-			fmt.Println("No objects found in package.")
-			return nil
+		return nil
+	}
+
+	if len(objects) == 0 {
+		fmt.Fprintln(w, emptyMessage)
+		return nil
+	}
+
+	for _, obj := range objects {
+		parts := []string{}
+		if t, ok := obj["type"]; ok {
+			parts = append(parts, fmt.Sprintf("%v", t))
 		}
-		for _, obj := range objects {
-			parts := []string{}
-			if t, ok := obj["type"]; ok {
-				parts = append(parts, fmt.Sprintf("%v", t))
-			}
-			if n, ok := obj["name"]; ok {
-				parts = append(parts, fmt.Sprintf("%v", n))
-			}
-			fmt.Println(strings.Join(parts, "\t"))
+		if n, ok := obj["name"]; ok {
+			parts = append(parts, fmt.Sprintf("%v", n))
 		}
+		fmt.Fprintln(w, strings.Join(parts, "\t"))
 	}
 
 	return nil

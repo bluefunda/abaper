@@ -265,7 +265,7 @@ func (c *Client) Activate(objectName, objectType string) (*map[string]any, error
 		"object_name": objectName,
 		"object_type": objectType,
 	}
-	return Post[map[string]any](c, "/api/v1/activate", body)
+	return Post[map[string]any](c, "/api/v1/objects/activate", body)
 }
 
 // SyntaxCheck runs syntax validation on source code.
@@ -394,7 +394,6 @@ func (c *Client) PackageContents(packageName string) ([]map[string]any, error) {
 	}
 	return result.Objects, nil
 }
-
 
 // ChatTitle generates a title for a chat session.
 func (c *Client) ChatTitle(chatID, prompt string) (string, error) {
