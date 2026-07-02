@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.13.1](https://github.com/bluefunda/abaper/compare/v1.13.0...v1.13.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **adt:** repair packages/contents parsing and enable DDIC creation ([#98](https://github.com/bluefunda/abaper/issues/98)) ([80c59c3](https://github.com/bluefunda/abaper/commit/80c59c383df2a728a4e656ce74b21d364fdf1284))
+
 ## [1.13.0](https://github.com/bluefunda/abaper/compare/v1.12.0...v1.13.0) (2026-07-02)
 
 
