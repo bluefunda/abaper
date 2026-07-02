@@ -21,6 +21,7 @@ import (
 
 // ADT Endpoint Constants
 const (
+	nodestructureEndpoint   = "/repository/nodestructure"
 	programsEndpoint        = "/programs/programs/%s/source/main"
 	classesEndpoint         = "/oo/classes/%s/source/main"
 	functionGroupsEndpoint  = "/functions/groups/%s/source/main"
@@ -569,6 +570,103 @@ func (c *ADTClientImpl) ListPackages(ctx context.Context, pattern string) ([]typ
 		zap.Int("packages_found", len(packages)))
 
 	return packages, nil
+}
+
+// GetNodeContents retrieves the hierarchical contents of a package using the
+// ADT nodestructure endpoint. Unlike GetPackageContents (which uses quickSearch),
+// this returns real URIs and expandable flags that the editor tree needs.
+func (c *ADTClientImpl) GetNodeContents(ctx context.Context, packageName string) (*types.PackageContentsResult, error) {
+	if !c.IsAuthenticated() {
+		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+
+	packageName = strings.ToUpper(strings.TrimSpace(packageName))
+	c.logger.Info("Retrieving node contents", zap.String("package", packageName))
+
+	requestURL := fmt.Sprintf("%s%s?parent_name=%s&parent_type=DEVC%%2FK&withShortDescriptions=true",
+		c.baseURL,
+		nodestructureEndpoint,
+		url.QueryEscape(packageName))
+
+	req, err := http.NewRequestWithContext(ctx, "POST", requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.addAuthHeaders(req)
+	req.Header.Set("Accept", "application/xml")
+
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: package %s", ErrNotFound, packageName)
+		}
+		return nil, fmt.Errorf("nodestructure for %s: HTTP %d - %s", packageName, resp.StatusCode, string(body))
+	}
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// ADT nodestructure XML: two distinct response formats are observed in the wild.
+	// We parse a flexible envelope that covers both attribute-style and element-style variants.
+	type xmlObjectType struct {
+		Type  string `xml:"OBJECT_TYPE"`
+		Label string `xml:"OBJECT_TYPE_LABEL"`
+	}
+	type xmlNode struct {
+		Name        string `xml:"OBJECT_NAME"`
+		Type        string `xml:"OBJECT_TYPE"`
+		Description string `xml:"DESCRIPTION"`
+		URI         string `xml:"OBJECT_URI"`
+		Expandable  string `xml:"EXPANDABLE"` // "X" or "" in ABAP-style XML
+	}
+	type xmlEnvelope struct {
+		XMLName     xml.Name        `xml:"nodeStructure"`
+		ObjectTypes []xmlObjectType `xml:"objectTypeDescriptions>objectTypeDescription"`
+		Nodes       []xmlNode       `xml:"objectNodes>SEU_ADT_REPOSITORY_OBJ_NODE"`
+	}
+
+	var envelope xmlEnvelope
+	if err := xml.Unmarshal(responseBody, &envelope); err != nil {
+		return nil, fmt.Errorf("parse nodestructure response: %w", err)
+	}
+
+	nodes := make([]types.PackageNode, 0, len(envelope.Nodes))
+	for _, n := range envelope.Nodes {
+		nodes = append(nodes, types.PackageNode{
+			Name:        n.Name,
+			Type:        n.Type,
+			Description: n.Description,
+			Expandable:  n.Expandable == "X",
+			URI:         n.URI,
+		})
+	}
+
+	objectTypes := make([]types.PackageObjectType, 0, len(envelope.ObjectTypes))
+	for _, ot := range envelope.ObjectTypes {
+		objectTypes = append(objectTypes, types.PackageObjectType{
+			Type:  ot.Type,
+			Label: ot.Label,
+		})
+	}
+
+	c.logger.Info("Node contents retrieved",
+		zap.String("package", packageName),
+		zap.Int("nodes", len(nodes)),
+		zap.Int("object_types", len(objectTypes)))
+
+	return &types.PackageContentsResult{
+		Nodes:       nodes,
+		ObjectTypes: objectTypes,
+	}, nil
 }
 
 // TestConnection tests the ADT connection with comprehensive diagnostics

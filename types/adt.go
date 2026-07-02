@@ -196,11 +196,34 @@ type SourceWriter interface {
 	UpdateFunctionGroup(ctx context.Context, name, source string) error
 }
 
+// PackageNode is a single entry returned by the nodestructure endpoint.
+// It carries a URI and expandable flag, enabling tree navigation in the editor.
+type PackageNode struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Description string `json:"description"`
+	Expandable  bool   `json:"expandable"`
+	URI         string `json:"uri"`
+}
+
+// PackageObjectType describes a category of objects present in a package.
+type PackageObjectType struct {
+	Type  string `json:"type"`
+	Label string `json:"label"`
+}
+
+// PackageContentsResult is the response shape expected by abaper-editor's Explorer tree.
+type PackageContentsResult struct {
+	Nodes       []PackageNode       `json:"nodes"`
+	ObjectTypes []PackageObjectType `json:"objectTypes"`
+}
+
 // PackageBrowser searches and navigates package contents.
 type PackageBrowser interface {
 	SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*ADTSearchResult, error)
 	ListPackages(ctx context.Context, pattern string) ([]ADTPackage, error)
 	GetPackageContents(ctx context.Context, name string) (*ADTPackage, error)
+	GetNodeContents(ctx context.Context, packageName string) (*PackageContentsResult, error)
 }
 
 // ObjectActivator activates objects and runs tests.

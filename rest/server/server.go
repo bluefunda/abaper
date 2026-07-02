@@ -108,6 +108,8 @@ func (rs *RestServer) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/activate", rs.corsHandler(rs.activateObjectHandler))
+	mux.HandleFunc("/api/v1/activate", rs.corsHandler(rs.activateObjectHandler)) // alias used by all external clients
+	mux.HandleFunc("/api/v1/packages/contents", rs.corsHandler(rs.packageContentsHandler))
 	mux.HandleFunc("/api/v1/syntax-check", rs.corsHandler(rs.syntaxCheckHandler))
 	mux.HandleFunc("/api/v1/format", rs.corsHandler(rs.formatSourceHandler))
 	mux.HandleFunc("/api/v1/completion", rs.corsHandler(rs.completionHandler))
@@ -293,6 +295,48 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 	objectType := strings.ToUpper(req.ObjectType)
 	objectName := strings.ToUpper(req.ObjectName)
 
+	ctx := r.Context()
+
+	// abaper-ts convention: source without description means SAVE, not CREATE.
+	// editor saveObject() and mcp UpdateObject() both POST here with source+no description.
+	if req.Source != "" && req.Description == "" {
+		var saveErr error
+		switch objectType {
+		case "PROGRAM", "PROG":
+			saveErr = c.UpdateProgram(ctx, objectName, req.Source)
+		case "CLASS", "CLAS":
+			saveErr = c.UpdateClass(ctx, objectName, req.Source)
+		case "INCLUDE", "INCL":
+			saveErr = c.UpdateInclude(ctx, objectName, req.Source)
+		case "INTERFACE", "INTF":
+			saveErr = c.UpdateInterface(ctx, objectName, req.Source)
+		case "FUNCTION", "FUNC":
+			if len(req.Args) == 0 {
+				rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
+				return
+			}
+			saveErr = c.UpdateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), req.Source)
+		case "FUNCTIONGROUP", "FUGR":
+			saveErr = c.UpdateFunctionGroup(ctx, objectName, req.Source)
+		default:
+			rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
+			return
+		}
+		if saveErr != nil {
+			rs.sendError(w, saveErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		rs.sendSuccess(w, map[string]any{
+			"object_name":     objectName,
+			"object_type":     objectType,
+			"created":         false,
+			"source_inserted": true,
+			"source_length":   len(req.Source),
+			"message":         fmt.Sprintf("%s %s saved successfully", objectType, objectName),
+		})
+		return
+	}
+
 	// Parse creation options from request
 	description := req.Description
 	if description == "" {
@@ -310,8 +354,6 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		zap.String("name", objectName),
 		zap.String("package", packageName),
 		zap.Int("source_length", len(sourceCode)))
-
-	ctx := r.Context()
 
 	switch objectType {
 	case "PROGRAM", "PROG":
@@ -338,7 +380,6 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Return success response with creation details
 	result := map[string]any{
 		"object_name": objectName,
 		"object_type": objectType,
@@ -471,6 +512,34 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 	rs.sendSuccess(w, objects)
 }
 
+func (rs *RestServer) packageContentsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	packageName := strings.ToUpper(strings.TrimSpace(req.PackageName))
+	if packageName == "" {
+		rs.sendError(w, "package_name is required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	result, err := c.GetNodeContents(r.Context(), packageName)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
+}
+
 func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -571,7 +640,13 @@ func (rs *RestServer) activateObjectHandler(w http.ResponseWriter, r *http.Reque
 		rs.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	rs.sendSuccess(w, result)
+	// Shape matches abaper-ts activate.ts: data.activated (bool) instead of data.success.
+	rs.sendSuccess(w, map[string]any{
+		"object_name": result.ObjectName,
+		"object_type": result.ObjectType,
+		"activated":   result.Success,
+		"messages":    result.Messages,
+	})
 }
 
 func (rs *RestServer) syntaxCheckHandler(w http.ResponseWriter, r *http.Request) {
