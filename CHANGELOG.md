@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.15.0](https://github.com/bluefunda/abaper/compare/v1.14.0...v1.15.0) (2026-07-02)
+
+
+### Features
+
+* **adt:** domain/data-element create+update via structured-properties flow ([#102](https://github.com/bluefunda/abaper/issues/102)) ([b97e8dc](https://github.com/bluefunda/abaper/commit/b97e8dc6fcee4d06aad742a68b56acb29845ab90))
+
 ## [1.14.0](https://github.com/bluefunda/abaper/compare/v1.13.1...v1.14.0) (2026-07-02)
 
 
