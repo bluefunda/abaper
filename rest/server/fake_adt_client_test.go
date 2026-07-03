@@ -13,34 +13,41 @@ type fakeADTClient struct {
 	authenticated bool
 	testConnErr   error
 
-	getProgramFn         func(ctx context.Context, name string) (*types.ADTSourceCode, error)
-	getPackageContentsFn func(ctx context.Context, name string) (*types.ADTPackage, error)
-	getNodeContentsFn    func(ctx context.Context, name string) (*types.PackageContentsResult, error)
-	listPackagesFn       func(ctx context.Context, pattern string) ([]types.ADTPackage, error)
-	searchObjectsFn      func(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error)
-	updateProgramFn      func(ctx context.Context, name, source string) error
-	updateClassFn        func(ctx context.Context, name, source string) error
-	updateFunctionFn     func(ctx context.Context, functionName, functionGroup, source string) error
-	updateTableFn        func(ctx context.Context, name, source string) error
-	updateStructureFn    func(ctx context.Context, name, source string) error
-	updateDDLSFn         func(ctx context.Context, name, source string) error
-	createProgramFn      func(ctx context.Context, name, description, packageName, source string) error
-	createClassFn        func(ctx context.Context, name, description, packageName, source string) error
-	createFunctionFn     func(ctx context.Context, name, functionGroup, description, source string) error
-	createDDLSFn         func(ctx context.Context, name, description, source string) error
-	createDomainFn       func(ctx context.Context, name string, props types.DomainProperties) error
-	updateDomainFn       func(ctx context.Context, name string, props types.DomainProperties) error
-	createDataElementFn  func(ctx context.Context, name string, props types.DataElementProperties) error
-	updateDataElementFn  func(ctx context.Context, name string, props types.DataElementProperties) error
-	getTypeInfoFn        func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error)
-	activateObjectFn     func(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error)
-	runUnitTestsFn       func(ctx context.Context, objectType, objectName string) (*types.UnitTestResult, error)
-	syntaxCheckFn        func(ctx context.Context, objectType, objectName, source string) (*types.SyntaxCheckResult, error)
-	formatSourceFn       func(ctx context.Context, source string) (string, error)
-	completionFn         func(ctx context.Context, objectType, objectName, source string, line, col int) ([]types.CompletionProposal, error)
-	navigationFn         func(ctx context.Context, objectType, objectName, source string, line, col int) (*types.NavigationTarget, error)
-	transportInfoFn      func(ctx context.Context, objectType, objectName string) (*types.ADTTransportInfo, error)
-	createTransportFn    func(ctx context.Context, objectType, objectName, description, packageName string) (string, error)
+	getProgramFn            func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getSRVDSourceFn         func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getPackageContentsFn    func(ctx context.Context, name string) (*types.ADTPackage, error)
+	getNodeContentsFn       func(ctx context.Context, name string) (*types.PackageContentsResult, error)
+	listPackagesFn          func(ctx context.Context, pattern string) ([]types.ADTPackage, error)
+	searchObjectsFn         func(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error)
+	updateProgramFn         func(ctx context.Context, name, source string) error
+	updateClassFn           func(ctx context.Context, name, source string) error
+	updateFunctionFn        func(ctx context.Context, functionName, functionGroup, source string) error
+	updateTableFn           func(ctx context.Context, name, source string) error
+	updateStructureFn       func(ctx context.Context, name, source string) error
+	updateDDLSFn            func(ctx context.Context, name, source string) error
+	createProgramFn         func(ctx context.Context, name, description, packageName, source string) error
+	createClassFn           func(ctx context.Context, name, description, packageName, source string) error
+	createFunctionFn        func(ctx context.Context, name, functionGroup, description, source string) error
+	createDDLSFn            func(ctx context.Context, name, description, source string) error
+	createSRVDFn            func(ctx context.Context, name, description, source string) error
+	updateSRVDFn            func(ctx context.Context, name, source string) error
+	createDomainFn          func(ctx context.Context, name string, props types.DomainProperties) error
+	updateDomainFn          func(ctx context.Context, name string, props types.DomainProperties) error
+	createDataElementFn     func(ctx context.Context, name string, props types.DataElementProperties) error
+	updateDataElementFn     func(ctx context.Context, name string, props types.DataElementProperties) error
+	getServiceBindingFn     func(ctx context.Context, name string) (*types.ADTServiceBinding, error)
+	createServiceBindingFn  func(ctx context.Context, name string, props types.ServiceBindingProperties) error
+	updateServiceBindingFn  func(ctx context.Context, name string, props types.ServiceBindingProperties) error
+	publishServiceBindingFn func(ctx context.Context, name string) (*types.ServiceBindingPublishResult, error)
+	getTypeInfoFn           func(ctx context.Context, typeName string) (*types.ADTTypeInfo, error)
+	activateObjectFn        func(ctx context.Context, objectType, objectName string) (*types.ActivationResult, error)
+	runUnitTestsFn          func(ctx context.Context, objectType, objectName string) (*types.UnitTestResult, error)
+	syntaxCheckFn           func(ctx context.Context, objectType, objectName, source string) (*types.SyntaxCheckResult, error)
+	formatSourceFn          func(ctx context.Context, source string) (string, error)
+	completionFn            func(ctx context.Context, objectType, objectName, source string, line, col int) ([]types.CompletionProposal, error)
+	navigationFn            func(ctx context.Context, objectType, objectName, source string, line, col int) (*types.NavigationTarget, error)
+	transportInfoFn         func(ctx context.Context, objectType, objectName string) (*types.ADTTransportInfo, error)
+	createTransportFn       func(ctx context.Context, objectType, objectName, description, packageName string) (string, error)
 }
 
 func (f *fakeADTClient) Authenticate() error              { return nil }
@@ -77,6 +84,12 @@ func (f *fakeADTClient) GetFunctionGroup(ctx context.Context, name string) (*typ
 }
 func (f *fakeADTClient) GetDDLSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "DDLS"}, nil
+}
+func (f *fakeADTClient) GetSRVDSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getSRVDSourceFn != nil {
+		return f.getSRVDSourceFn(ctx, name)
+	}
+	return &types.ADTSourceCode{ObjectName: name, ObjectType: "SRVD"}, nil
 }
 func (f *fakeADTClient) GetObjectSource(ctx context.Context, objectType, objectName string) (string, error) {
 	return "", nil
@@ -124,6 +137,12 @@ func (f *fakeADTClient) CreateDDLS(ctx context.Context, name, description, sourc
 	}
 	return nil
 }
+func (f *fakeADTClient) CreateSRVD(ctx context.Context, name, description, source string) error {
+	if f.createSRVDFn != nil {
+		return f.createSRVDFn(ctx, name, description, source)
+	}
+	return nil
+}
 func (f *fakeADTClient) UpdateProgram(ctx context.Context, name, source string) error {
 	if f.updateProgramFn != nil {
 		return f.updateProgramFn(ctx, name, source)
@@ -167,6 +186,12 @@ func (f *fakeADTClient) UpdateDDLS(ctx context.Context, name, source string) err
 	}
 	return nil
 }
+func (f *fakeADTClient) UpdateSRVD(ctx context.Context, name, source string) error {
+	if f.updateSRVDFn != nil {
+		return f.updateSRVDFn(ctx, name, source)
+	}
+	return nil
+}
 func (f *fakeADTClient) CreateDomain(ctx context.Context, name string, props types.DomainProperties) error {
 	if f.createDomainFn != nil {
 		return f.createDomainFn(ctx, name, props)
@@ -190,6 +215,31 @@ func (f *fakeADTClient) UpdateDataElement(ctx context.Context, name string, prop
 		return f.updateDataElementFn(ctx, name, props)
 	}
 	return nil
+}
+
+func (f *fakeADTClient) GetServiceBinding(ctx context.Context, name string) (*types.ADTServiceBinding, error) {
+	if f.getServiceBindingFn != nil {
+		return f.getServiceBindingFn(ctx, name)
+	}
+	return &types.ADTServiceBinding{Name: name}, nil
+}
+func (f *fakeADTClient) CreateServiceBinding(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+	if f.createServiceBindingFn != nil {
+		return f.createServiceBindingFn(ctx, name, props)
+	}
+	return nil
+}
+func (f *fakeADTClient) UpdateServiceBinding(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+	if f.updateServiceBindingFn != nil {
+		return f.updateServiceBindingFn(ctx, name, props)
+	}
+	return nil
+}
+func (f *fakeADTClient) PublishServiceBinding(ctx context.Context, name string) (*types.ServiceBindingPublishResult, error) {
+	if f.publishServiceBindingFn != nil {
+		return f.publishServiceBindingFn(ctx, name)
+	}
+	return &types.ServiceBindingPublishResult{Severity: "OK"}, nil
 }
 
 func (f *fakeADTClient) SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*types.ADTSearchResult, error) {

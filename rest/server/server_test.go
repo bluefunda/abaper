@@ -155,6 +155,51 @@ func TestGetObjectHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("srvd", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			getSRVDSourceFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				gotName = name
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "SRVD"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "srvd",
+			"object_name": "zabpb_sd1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_SD1" {
+			t.Errorf("expected uppercased object name passed through, got %q", gotName)
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "SRVD" {
+			t.Errorf("expected ObjectType SRVD, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("srvb", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getServiceBindingFn: func(ctx context.Context, name string) (*types.ADTServiceBinding, error) {
+				return &types.ADTServiceBinding{Name: name, ServiceDefinitionName: "ZABPB_SD1", BindingVersion: "V4", Published: true}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "srvb",
+			"object_name": "zabpb_sb1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTServiceBinding](t, rec)
+		if data.ServiceDefinitionName != "ZABPB_SD1" || data.BindingVersion != "V4" || !data.Published {
+			t.Errorf("unexpected service binding data: %+v", data)
+		}
+	})
+
 	t.Run("missing fields", func(t *testing.T) {
 		rs := newTestServer(t, &fakeADTClient{})
 		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{"object_type": "program"})
@@ -302,6 +347,75 @@ func TestCreateObjectHandler(t *testing.T) {
 			t.Errorf("expected name=ZABPB_CDS1 with source, got name=%q source=%q", gotName, gotSource)
 		}
 	})
+
+	t.Run("srvd create", func(t *testing.T) {
+		var gotName, gotSource string
+		fake := &fakeADTClient{
+			createSRVDFn: func(ctx context.Context, name, description, source string) error {
+				gotName, gotSource = name, source
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "srvd",
+			"object_name": "zabpb_sd1",
+			"description": "test service definition",
+			"source":      "define service ZABPB_SD1 { expose zabpb_cds1; }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_SD1" || gotSource == "" {
+			t.Errorf("expected name=ZABPB_SD1 with source, got name=%q source=%q", gotName, gotSource)
+		}
+	})
+
+	t.Run("srvb create requires service_binding_properties", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]any{
+			"object_type": "srvb",
+			"object_name": "zabpb_sb1",
+			"description": "test service binding",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("srvb create", func(t *testing.T) {
+		var gotName string
+		var gotProps types.ServiceBindingProperties
+		fake := &fakeADTClient{
+			createServiceBindingFn: func(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+				gotName, gotProps = name, props
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]any{
+			"object_type": "srvb",
+			"object_name": "zabpb_sb1",
+			"description": "test service binding",
+			"service_binding_properties": map[string]any{
+				"service_definition_name": "zabpb_sd1",
+				"binding_version":         "V4",
+				"binding_category":        "0",
+			},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_SB1" {
+			t.Errorf("expected uppercased name ZABPB_SB1, got %q", gotName)
+		}
+		if gotProps.ServiceDefinitionName != "zabpb_sd1" || gotProps.BindingVersion != "V4" {
+			t.Errorf("expected properties passed through, got %+v", gotProps)
+		}
+		if gotProps.Description != "test service binding" {
+			t.Errorf("expected description to default from request description, got %q", gotProps.Description)
+		}
+	})
 }
 
 // --- objects/save ---
@@ -403,6 +517,64 @@ func TestSaveObjectHandler(t *testing.T) {
 		}
 		if !called {
 			t.Error("expected UpdateDDLS to be called")
+		}
+	})
+
+	t.Run("updates srvd", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateSRVDFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "srvd",
+			"object_name": "zabpb_sd1",
+			"source":      "define service ZABPB_SD1 { expose zabpb_cds1; }",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateSRVD to be called")
+		}
+	})
+
+	t.Run("updates srvb via service_binding_properties", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateServiceBindingFn: func(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]any{
+			"object_type": "srvb",
+			"object_name": "zabpb_sb1",
+			"service_binding_properties": map[string]any{
+				"service_definition_name": "zabpb_sd1",
+				"binding_version":         "V4",
+			},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateServiceBinding to be called")
+		}
+	})
+
+	t.Run("srvb save requires service_binding_properties", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "srvb",
+			"object_name": "zabpb_sb1",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
@@ -605,6 +777,50 @@ func TestActivateObjectHandler(t *testing.T) {
 		}
 		if !saved {
 			t.Errorf("expected UpdateProgram to be called before activation")
+		}
+	})
+}
+
+// --- service-bindings/publish ---
+
+func TestPublishServiceBindingHandler(t *testing.T) {
+	t.Run("publishes", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			publishServiceBindingFn: func(ctx context.Context, name string) (*types.ServiceBindingPublishResult, error) {
+				gotName = name
+				return &types.ServiceBindingPublishResult{Severity: "OK", ShortText: name + " published locally"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/service-bindings/publish", map[string]string{
+			"object_name": "zabpb_sb1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_SB1" {
+			t.Errorf("expected uppercased object name passed through, got %q", gotName)
+		}
+		data := decodeSuccess[types.ServiceBindingPublishResult](t, rec)
+		if data.Severity != "OK" {
+			t.Errorf("expected severity OK, got %q", data.Severity)
+		}
+	})
+
+	t.Run("missing object_name", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/service-bindings/publish", map[string]string{})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("method not allowed", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodGet, "/api/v1/service-bindings/publish", nil)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405, got %d", rec.Code)
 		}
 	})
 }

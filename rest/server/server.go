@@ -109,6 +109,7 @@ func (rs *RestServer) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/activate", rs.corsHandler(rs.activateObjectHandler))
 	mux.HandleFunc("/api/v1/activate", rs.corsHandler(rs.activateObjectHandler)) // alias used by all external clients
+	mux.HandleFunc("/api/v1/service-bindings/publish", rs.corsHandler(rs.publishServiceBindingHandler))
 	mux.HandleFunc("/api/v1/packages/contents", rs.corsHandler(rs.packageContentsHandler))
 	mux.HandleFunc("/api/v1/syntax-check", rs.corsHandler(rs.syntaxCheckHandler))
 	mux.HandleFunc("/api/v1/format", rs.corsHandler(rs.formatSourceHandler))
@@ -251,6 +252,10 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		result, err = c.GetTable(ctx, objectName)
 	case "DDLS", "DATA_DEFINITION":
 		result, err = c.GetDDLSource(ctx, objectName)
+	case "SRVD", "SERVICE_DEFINITION":
+		result, err = c.GetSRVDSource(ctx, objectName)
+	case "SRVB", "SERVICE_BINDING":
+		result, err = c.GetServiceBinding(ctx, objectName)
 	case "FUNCTIONGROUP", "FUGR":
 		result, err = c.GetFunctionGroup(ctx, objectName)
 	case "DOMAIN", "DOMA":
@@ -328,6 +333,8 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 			saveErr = c.UpdateStructure(ctx, objectName, req.Source)
 		case "DDLS", "DATA_DEFINITION":
 			saveErr = c.UpdateDDLS(ctx, objectName, req.Source)
+		case "SRVD", "SERVICE_DEFINITION":
+			saveErr = c.UpdateSRVD(ctx, objectName, req.Source)
 		default:
 			rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
 			return
@@ -388,6 +395,8 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		err = c.CreateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), description, sourceCode)
 	case "DDLS", "DATA_DEFINITION":
 		err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+	case "SRVD", "SERVICE_DEFINITION":
+		err = c.CreateSRVD(ctx, objectName, description, sourceCode)
 	case "DOMAIN", "DOMA":
 		if req.DomainProperties == nil {
 			rs.sendError(w, "domain_properties is required to create a domain", http.StatusBadRequest)
@@ -408,6 +417,16 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 			props.Description = description
 		}
 		err = c.CreateDataElement(ctx, objectName, props)
+	case "SRVB", "SERVICE_BINDING":
+		if req.ServiceBindingProperties == nil {
+			rs.sendError(w, "service_binding_properties is required to create a service binding", http.StatusBadRequest)
+			return
+		}
+		props := *req.ServiceBindingProperties
+		if props.Description == "" {
+			props.Description = description
+		}
+		err = c.CreateServiceBinding(ctx, objectName, props)
 	default:
 		rs.sendError(w, "unsupported object type for creation: "+objectType, http.StatusBadRequest)
 		return
@@ -626,6 +645,17 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		rs.sendSuccess(w, map[string]any{"object_name": objectName, "object_type": objectType, "message": fmt.Sprintf("%s %s saved successfully", objectType, objectName)})
 		return
+	case "SRVB", "SERVICE_BINDING":
+		if req.ServiceBindingProperties == nil {
+			rs.sendError(w, "service_binding_properties is required to update a service binding", http.StatusBadRequest)
+			return
+		}
+		if err := c.UpdateServiceBinding(ctx, objectName, *req.ServiceBindingProperties); err != nil {
+			rs.sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rs.sendSuccess(w, map[string]any{"object_name": objectName, "object_type": objectType, "message": fmt.Sprintf("%s %s saved successfully", objectType, objectName)})
+		return
 	}
 
 	if req.Source == "" {
@@ -655,6 +685,8 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 		err = c.UpdateStructure(ctx, objectName, req.Source)
 	case "DDLS", "DATA_DEFINITION":
 		err = c.UpdateDDLS(ctx, objectName, req.Source)
+	case "SRVD", "SERVICE_DEFINITION":
+		err = c.UpdateSRVD(ctx, objectName, req.Source)
 	default:
 		rs.sendError(w, "unsupported object type for save: "+objectType, http.StatusBadRequest)
 		return
@@ -723,6 +755,36 @@ func (rs *RestServer) activateObjectHandler(w http.ResponseWriter, r *http.Reque
 		"activated":   result.Success,
 		"messages":    result.Messages,
 	})
+}
+
+// publishServiceBindingHandler registers a Service Binding's OData service
+// at runtime. The binding must already be created and active.
+func (rs *RestServer) publishServiceBindingHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectName == "" {
+		rs.sendError(w, "object_name is required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	objectName := strings.ToUpper(req.ObjectName)
+	result, err := c.PublishServiceBinding(r.Context(), objectName)
+	if err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, result)
 }
 
 func (rs *RestServer) syntaxCheckHandler(w http.ResponseWriter, r *http.Request) {
