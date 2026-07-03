@@ -23,6 +23,9 @@ type APIRequest struct {
 	// Structured properties for DDIC objects that are not source-text based.
 	DomainProperties      *types.DomainProperties      `json:"domain_properties,omitempty"`
 	DataElementProperties *types.DataElementProperties `json:"data_element_properties,omitempty"`
+
+	// Structured properties for a Service Binding (SRVB/SVB, not source-text).
+	ServiceBindingProperties *types.ServiceBindingProperties `json:"service_binding_properties,omitempty"`
 }
 
 // APIResponse is the standard response envelope. T is the data payload type.
