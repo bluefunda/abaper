@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.0](https://github.com/bluefunda/abaper/compare/v1.15.1...v1.16.0) (2026-07-03)
+
+
+### Features
+
+* **adt:** OData V4 (RAP) service exposure — Service Definition + Service Binding ([#107](https://github.com/bluefunda/abaper/issues/107)) ([36821be](https://github.com/bluefunda/abaper/commit/36821be8cac296fe0f967d9462c080c78cad7013))
+
 ## [1.15.1](https://github.com/bluefunda/abaper/compare/v1.15.0...v1.15.1) (2026-07-02)
 
 
