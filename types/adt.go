@@ -75,15 +75,15 @@ type ADTTransportInfo struct {
 
 // ADT Configuration
 type ADTConfig struct {
-	Host            string `json:"host"`
-	Client          string `json:"client"`
-	Username        string `json:"username"`
-	Password        string `json:"password"`
-	Language        string `json:"language"`
-	AllowSelfSigned bool   `json:"allow_self_signed"`
+	Host            string        `json:"host"`
+	Client          string        `json:"client"`
+	Username        string        `json:"username"`
+	Password        string        `json:"password"`
+	Language        string        `json:"language"`
+	AllowSelfSigned bool          `json:"allow_self_signed"`
 	ConnectTimeout  time.Duration `json:"connect_timeout"`
 	RequestTimeout  time.Duration `json:"request_timeout"`
-	Debug           bool   `json:"debug"`
+	Debug           bool          `json:"debug"`
 }
 
 // Additional data structures for extended services
@@ -111,10 +111,10 @@ type ADTTableColumn struct {
 }
 
 type ADTTypeInfo struct {
-	TypeName    string                 `json:"type_name"`
-	TypeKind    string                 `json:"type_kind"` // "DOMAIN", "DATA_ELEMENT", etc.
-	Description string                 `json:"description"`
-	Source      string                 `json:"source"`
+	TypeName    string         `json:"type_name"`
+	TypeKind    string         `json:"type_kind"` // "DOMAIN", "DATA_ELEMENT", etc.
+	Description string         `json:"description"`
+	Source      string         `json:"source"`
 	Properties  map[string]any `json:"properties"`
 }
 
@@ -175,6 +175,7 @@ type SourceReader interface {
 	GetFunction(ctx context.Context, functionName, functionGroup string) (*ADTSourceCode, error)
 	GetFunctionGroup(ctx context.Context, name string) (*ADTSourceCode, error)
 	GetDDLSource(ctx context.Context, name string) (*ADTSourceCode, error)
+	GetSRVDSource(ctx context.Context, name string) (*ADTSourceCode, error)
 	GetObjectSource(ctx context.Context, objectType, objectName string) (string, error)
 	CheckObjectExists(ctx context.Context, objectType, objectName string) (bool, error)
 }
@@ -190,6 +191,7 @@ type SourceWriter interface {
 	CreateFunctionGroup(ctx context.Context, name, description, source string) error
 	CreateFunction(ctx context.Context, name, functionGroup, description, source string) error
 	CreateDDLS(ctx context.Context, name, description, source string) error
+	CreateSRVD(ctx context.Context, name, description, source string) error
 	UpdateProgram(ctx context.Context, name, source string) error
 	UpdateClass(ctx context.Context, name, source string) error
 	UpdateInclude(ctx context.Context, name, source string) error
@@ -199,6 +201,7 @@ type SourceWriter interface {
 	UpdateTable(ctx context.Context, name, source string) error
 	UpdateStructure(ctx context.Context, name, source string) error
 	UpdateDDLS(ctx context.Context, name, source string) error
+	UpdateSRVD(ctx context.Context, name, source string) error
 }
 
 // PackageNode is a single entry returned by the nodestructure endpoint.
@@ -261,6 +264,47 @@ type DDICPropertyWriter interface {
 	UpdateDataElement(ctx context.Context, name string, props DataElementProperties) error
 }
 
+// ServiceBindingProperties describes a Service Binding (SRVB/SVB): the
+// runtime OData exposure of a Service Definition. Like domains/data
+// elements, this is structured metadata, not ABAP source text.
+type ServiceBindingProperties struct {
+	Description           string `json:"description,omitempty"`
+	ServiceDefinitionName string `json:"service_definition_name"`    // the SRVD/SRV this binding exposes
+	BindingVersion        string `json:"binding_version,omitempty"`  // "V2" or "V4" (OData version); defaults to "V4"
+	BindingCategory       string `json:"binding_category,omitempty"` // "0"=UI, "1"=Web API; defaults to "0"
+}
+
+// ADTServiceBinding is the parsed result of reading a Service Binding.
+type ADTServiceBinding struct {
+	Name                  string `json:"name"`
+	Description           string `json:"description"`
+	ServiceDefinitionName string `json:"service_definition_name"`
+	BindingVersion        string `json:"binding_version"`
+	BindingCategory       string `json:"binding_category"`
+	Version               string `json:"version"` // active/inactive
+	Published             bool   `json:"published"`
+}
+
+// ServiceBindingPublishResult reports the outcome of publishing a Service
+// Binding, registering its OData service for runtime consumption.
+type ServiceBindingPublishResult struct {
+	Severity  string `json:"severity"`
+	ShortText string `json:"short_text"`
+	LongText  string `json:"long_text,omitempty"`
+}
+
+// RAPServiceWriter creates, updates and publishes RAP-exposed OData
+// services (Service Bindings) that expose CDS views via a Service
+// Definition. Follows the same create -> lock -> set-properties -> unlock
+// -> activate flow as DDICPropertyWriter, plus a separate publish step to
+// register the runtime OData endpoint.
+type RAPServiceWriter interface {
+	GetServiceBinding(ctx context.Context, name string) (*ADTServiceBinding, error)
+	CreateServiceBinding(ctx context.Context, name string, props ServiceBindingProperties) error
+	UpdateServiceBinding(ctx context.Context, name string, props ServiceBindingProperties) error
+	PublishServiceBinding(ctx context.Context, name string) (*ServiceBindingPublishResult, error)
+}
+
 // PackageBrowser searches and navigates package contents.
 type PackageBrowser interface {
 	SearchObjects(ctx context.Context, pattern string, objectTypes []string) (*ADTSearchResult, error)
@@ -299,6 +343,7 @@ type ADTClient interface {
 	SourceReader
 	SourceWriter
 	DDICPropertyWriter
+	RAPServiceWriter
 	PackageBrowser
 	ObjectActivator
 	LangFeatures

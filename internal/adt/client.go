@@ -21,29 +21,30 @@ import (
 
 // ADT Endpoint Constants
 const (
-	nodestructureEndpoint   = "/repository/nodestructure"
-	programsEndpoint        = "/programs/programs/%s/source/main"
-	classesEndpoint         = "/oo/classes/%s/source/main"
-	functionGroupsEndpoint  = "/functions/groups/%s/source/main"
-	functionsEndpoint       = "/functions/groups/%s/fmodules/%s/source/main"
-	tablesEndpoint          = "/ddic/tables/%s/source/main"
-	structuresEndpoint      = "/ddic/structures/%s/source/main"
-	includesEndpoint        = "/programs/includes/%s/source/main"
-	interfacesEndpoint      = "/oo/interfaces/%s/source/main"
-	domainsEndpoint         = "/ddic/domains/%s"
-	dataElementsEndpoint    = "/ddic/dataelements/%s"
-	ddlSourcesEndpoint      = "/ddic/ddl/sources/%s/source/main"
-	searchEndpoint = "/repository/informationsystem/search"
-	transactionEndpoint     = "/repository/informationsystem/objectproperties/values"
-	programsCreateEndpoint  = "/programs/programs"
-	classesCreateEndpoint   = "/oo/classes"
-	tableContentsEndpoint      = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
-	formatEndpoint             = "/abapsource/prettyprinter"
-	transportInfoSuffix        = "/transportinfo"
-	createTransportSuffix      = "/transports"
-	interfacesCreateEndpoint   = "/oo/interfaces"
+	nodestructureEndpoint        = "/repository/nodestructure"
+	programsEndpoint             = "/programs/programs/%s/source/main"
+	classesEndpoint              = "/oo/classes/%s/source/main"
+	functionGroupsEndpoint       = "/functions/groups/%s/source/main"
+	functionsEndpoint            = "/functions/groups/%s/fmodules/%s/source/main"
+	tablesEndpoint               = "/ddic/tables/%s/source/main"
+	structuresEndpoint           = "/ddic/structures/%s/source/main"
+	includesEndpoint             = "/programs/includes/%s/source/main"
+	interfacesEndpoint           = "/oo/interfaces/%s/source/main"
+	domainsEndpoint              = "/ddic/domains/%s"
+	dataElementsEndpoint         = "/ddic/dataelements/%s"
+	ddlSourcesEndpoint           = "/ddic/ddl/sources/%s/source/main"
+	srvdSourcesEndpoint          = "/ddic/srvd/sources/%s/source/main"
+	searchEndpoint               = "/repository/informationsystem/search"
+	transactionEndpoint          = "/repository/informationsystem/objectproperties/values"
+	programsCreateEndpoint       = "/programs/programs"
+	classesCreateEndpoint        = "/oo/classes"
+	tableContentsEndpoint        = "/z_mcp_abap_adt/z_tablecontent/%s" // Custom service required
+	formatEndpoint               = "/abapsource/prettyprinter"
+	transportInfoSuffix          = "/transportinfo"
+	createTransportSuffix        = "/transports"
+	interfacesCreateEndpoint     = "/oo/interfaces"
 	functionGroupsCreateEndpoint = "/functions/groups"
-	includesCreateEndpoint     = "/programs/includes"
+	includesCreateEndpoint       = "/programs/includes"
 )
 
 // ErrNotFound is returned when an ADT object does not exist (HTTP 404).
@@ -358,6 +359,11 @@ func (c *ADTClientImpl) GetFunctionGroup(ctx context.Context, functionGroup stri
 // GetDDLSource retrieves CDS / DDL source code.
 func (c *ADTClientImpl) GetDDLSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
 	return c.getSource(ctx, "DDLS", name, ddlSourcesEndpoint)
+}
+
+// GetSRVDSource retrieves Service Definition (SRVD/SRV) source code.
+func (c *ADTClientImpl) GetSRVDSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	return c.getSource(ctx, "SRVD", name, srvdSourcesEndpoint)
 }
 
 // GetInclude retrieves ABAP include source code.
@@ -976,14 +982,14 @@ func (c *ADTClientImpl) CreateClassWithOptions(ctx context.Context, opts CreateC
 
 // classCreatePayload is the XML struct for class creation.
 type classCreatePayload struct {
-	XMLName     xml.Name           `xml:"class:abapClass"`
-	ClassNS     string             `xml:"xmlns:class,attr"`
-	AdtcoreNS   string             `xml:"xmlns:adtcore,attr"`
-	Description string             `xml:"adtcore:description,attr"`
-	Name        string             `xml:"adtcore:name,attr"`
-	Type        string             `xml:"adtcore:type,attr"`
-	Responsible string             `xml:"adtcore:responsible,attr"`
-	PackageRef  classPackageRef    `xml:"adtcore:packageRef"`
+	XMLName     xml.Name        `xml:"class:abapClass"`
+	ClassNS     string          `xml:"xmlns:class,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
 }
 
 type classPackageRef struct {
@@ -1072,16 +1078,14 @@ func (c *ADTClientImpl) activateClass(ctx context.Context, opts *CreateClassOpti
 	}
 	defer resp.Body.Close()
 
+	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(responseBody))
 	}
-
-	// Parse activation response to check for warnings/errors
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.logger.Warn("Could not read activation response", zap.Error(err))
-		return nil // Don't fail if we can't read the response
+	// SAP answers HTTP 200 for this endpoint even when activation itself
+	// failed, so the checklist messages must be checked too.
+	if actErr := activationChecklistError(responseBody); actErr != nil {
+		return fmt.Errorf("activation of class %s failed: %w", opts.Name, actErr)
 	}
 
 	c.logger.Debug("Activation response", zap.String("class", opts.Name), zap.String("body", string(responseBody)))
@@ -1124,58 +1128,34 @@ func (c *ADTClientImpl) createAndPopulate(ctx context.Context, createEndpoint, o
 		if err != nil {
 			return fmt.Errorf("failed to lock: %w", err)
 		}
-		defer func() {
-			if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
-				c.logger.Warn("Failed to unlock", zap.String("path", objectPath), zap.Error(unlockErr))
-			}
-		}()
-		if err := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr); err != nil {
-			return fmt.Errorf("failed to write source: %w", err)
+		setErr := c.setObjectSource(ctx, sourcePath, source, lockHandle, corrNr)
+		// Unlock before activating, not deferred to function return: confirmed
+		// live that SAP silently no-ops activation on a still-locked object
+		// (checklist comes back with checkExecuted="false" and no messages at
+		// all, indistinguishable from success) rather than erroring.
+		if unlockErr := c.unlockObject(ctx, objectPath, lockHandle); unlockErr != nil {
+			c.logger.Warn("Failed to unlock", zap.String("path", objectPath), zap.Error(unlockErr))
+		}
+		if setErr != nil {
+			return fmt.Errorf("failed to write source: %w", setErr)
 		}
 	}
 	if !activate {
 		return nil
 	}
 	uri := fmt.Sprintf("/sap/bc/adt%s", objectPath)
-	activationReq := ActivationRequest{
-		Namespace: "http://www.sap.com/adt/core",
-		ObjectRef: ActivationRef{URI: uri, Name: strings.ToUpper(name)},
-	}
-	xmlPayload, err := xml.Marshal(activationReq)
-	if err != nil {
-		return fmt.Errorf("marshal activation: %w", err)
-	}
-	fullPayload := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + string(xmlPayload)
-	activateURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
-	req, err := http.NewRequestWithContext(ctx, "POST", activateURL, strings.NewReader(fullPayload))
-	if err != nil {
-		return fmt.Errorf("failed to create activation request: %w", err)
-	}
-	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "application/*")
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("X-CSRF-Token", c.csrfToken)
-	resp, err := c.doRequest(req)
-	if err != nil {
-		return fmt.Errorf("activation request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-	return nil
+	return c.activateWithRetry(ctx, uri, name)
 }
 
 type interfaceCreatePayload struct {
-	XMLName     xml.Name         `xml:"intf:abapInterface"`
-	IntfNS      string           `xml:"xmlns:intf,attr"`
-	AdtcoreNS   string           `xml:"xmlns:adtcore,attr"`
-	Description string           `xml:"adtcore:description,attr"`
-	Name        string           `xml:"adtcore:name,attr"`
-	Type        string           `xml:"adtcore:type,attr"`
-	Responsible string           `xml:"adtcore:responsible,attr"`
-	PackageRef  classPackageRef  `xml:"adtcore:packageRef"`
+	XMLName     xml.Name        `xml:"intf:abapInterface"`
+	IntfNS      string          `xml:"xmlns:intf,attr"`
+	AdtcoreNS   string          `xml:"xmlns:adtcore,attr"`
+	Description string          `xml:"adtcore:description,attr"`
+	Name        string          `xml:"adtcore:name,attr"`
+	Type        string          `xml:"adtcore:type,attr"`
+	Responsible string          `xml:"adtcore:responsible,attr"`
+	PackageRef  classPackageRef `xml:"adtcore:packageRef"`
 }
 
 func (c *ADTClientImpl) CreateInterface(ctx context.Context, name, description, source string) error {
@@ -1666,16 +1646,26 @@ type ObjectRef struct {
 	Name       string `xml:"name,attr"`
 }
 
-// ActivationRequest represents the activation request structure
+// ActivationRequest represents the activation request structure.
+//
+// Confirmed live against abap.bluefunda.com and cross-checked against the
+// abap-adt-api reference (github.com/marcellourbani/abap-adt-api,
+// src/api/activate.ts, always emits adtcore:objectReferences): the
+// default/unprefixed namespace form this struct used to emit
+// (<objectReferences xmlns="...">) makes SAP's activation checklist come
+// back with checkExecuted="false" and zero messages — indistinguishable
+// from success, but the object stays inactive — no matter how long you
+// retry. The adtcore:-prefixed form below is the one every other ADT client
+// uses and the one that actually runs the check.
 type ActivationRequest struct {
-	XMLName   xml.Name      `xml:"objectReferences"`
-	Namespace string        `xml:"xmlns,attr"`
-	ObjectRef ActivationRef `xml:"objectReference"`
+	XMLName   xml.Name      `xml:"adtcore:objectReferences"`
+	Namespace string        `xml:"xmlns:adtcore,attr"`
+	ObjectRef ActivationRef `xml:"adtcore:objectReference"`
 }
 
 type ActivationRef struct {
-	URI  string `xml:"uri,attr"`
-	Name string `xml:"name,attr"`
+	URI  string `xml:"adtcore:uri,attr"`
+	Name string `xml:"adtcore:name,attr"`
 }
 
 // CreateProgram creates a new ABAP program - now with working atomic approach
@@ -1759,14 +1749,14 @@ func (c *ADTClientImpl) parseLockResponse(responseBody []byte) (lockHandle, corr
 
 // programCreatePayload is the XML struct for program creation.
 type programCreatePayload struct {
-	XMLName     xml.Name           `xml:"program:abapProgram"`
-	ProgramNS   string             `xml:"xmlns:program,attr"`
-	AdtcoreNS   string             `xml:"xmlns:adtcore,attr"`
-	Description string             `xml:"adtcore:description,attr"`
-	Name        string             `xml:"adtcore:name,attr"`
-	Type        string             `xml:"adtcore:type,attr"`
-	Responsible string             `xml:"adtcore:responsible,attr"`
-	PackageRef  programPackageRef  `xml:"adtcore:packageRef"`
+	XMLName     xml.Name          `xml:"program:abapProgram"`
+	ProgramNS   string            `xml:"xmlns:program,attr"`
+	AdtcoreNS   string            `xml:"xmlns:adtcore,attr"`
+	Description string            `xml:"adtcore:description,attr"`
+	Name        string            `xml:"adtcore:name,attr"`
+	Type        string            `xml:"adtcore:type,attr"`
+	Responsible string            `xml:"adtcore:responsible,attr"`
+	PackageRef  programPackageRef `xml:"adtcore:packageRef"`
 }
 
 type programPackageRef struct {
@@ -2127,16 +2117,14 @@ func (c *ADTClientImpl) activateProgram(ctx context.Context, opts *CreateProgram
 	}
 	defer resp.Body.Close()
 
+	responseBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
+		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(responseBody))
 	}
-
-	// Parse activation response to check for warnings/errors
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.logger.Warn("Could not read activation response", zap.Error(err))
-		return nil // Don't fail if we can't read the response
+	// SAP answers HTTP 200 for this endpoint even when activation itself
+	// failed, so the checklist messages must be checked too.
+	if actErr := activationChecklistError(responseBody); actErr != nil {
+		return fmt.Errorf("activation of program %s failed: %w", opts.Name, actErr)
 	}
 
 	// Log activation response for debugging
@@ -2267,7 +2255,6 @@ func (c *ADTClientImpl) UpdateProgram(ctx context.Context, name, source string) 
 	c.logger.Info("Program updated successfully", zap.String("name", name))
 	return nil
 }
-
 
 // UpdateClass updates an existing ABAP class's source code
 func (c *ADTClientImpl) UpdateClass(ctx context.Context, name, source string) error {
@@ -2589,6 +2576,62 @@ func (c *ADTClientImpl) UpdateDDLS(ctx context.Context, name, source string) err
 	return c.updateSourceObject(ctx, "CDS view", objectPath, objectPath+"/source/main", name, source)
 }
 
+// srvdSourceCreatePayload is the create-shell body for a Service Definition
+// (SRVD/SRV). srvd:srvdSourceType="S" (Definition, vs. "X" Extension) is
+// required — confirmed live: SAP rejects creation with "Service Definition
+// type ” does not exist" if this attribute is omitted.
+type srvdSourceCreatePayload struct {
+	XMLName        xml.Name        `xml:"srvd:srvdSource"`
+	SrvdNS         string          `xml:"xmlns:srvd,attr"`
+	AdtcoreNS      string          `xml:"xmlns:adtcore,attr"`
+	Description    string          `xml:"adtcore:description,attr"`
+	Name           string          `xml:"adtcore:name,attr"`
+	Type           string          `xml:"adtcore:type,attr"`
+	Language       string          `xml:"adtcore:language,attr"`
+	MasterLanguage string          `xml:"adtcore:masterLanguage,attr"`
+	Responsible    string          `xml:"adtcore:responsible,attr"`
+	SourceType     string          `xml:"srvd:srvdSourceType,attr"`
+	PackageRef     classPackageRef `xml:"adtcore:packageRef"`
+}
+
+// CreateSRVD creates a new Service Definition (SRVD/SRV), which exposes one
+// or more CDS views for OData consumption via a Service Binding.
+func (c *ADTClientImpl) CreateSRVD(ctx context.Context, name, description, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := srvdSourceCreatePayload{
+		SrvdNS:         "http://www.sap.com/adt/ddic/srvdsources",
+		AdtcoreNS:      "http://www.sap.com/adt/core",
+		Description:    description,
+		Name:           name,
+		Type:           "SRVD/SRV",
+		Language:       "EN",
+		MasterLanguage: "EN",
+		Responsible:    strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		SourceType:     "S",
+		PackageRef:     classPackageRef{Name: "$TMP"},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal service definition metadata: %w", err)
+	}
+	if err := c.createObjectMetadata(ctx, "/ddic/srvd/sources", xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create service definition %s: %w", name, err)
+	}
+	nameLower := strings.ToLower(name)
+	return c.createAndPopulate(ctx, "/ddic/srvd/sources",
+		"/ddic/srvd/sources/"+nameLower,
+		"/ddic/srvd/sources/"+nameLower+"/source/main",
+		"SRVD", name, source, source != "")
+}
+
+// UpdateSRVD updates an existing Service Definition's (SRVD/SRV) source.
+func (c *ADTClientImpl) UpdateSRVD(ctx context.Context, name, source string) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	nameLower := strings.ToLower(name)
+	objectPath := fmt.Sprintf("/ddic/srvd/sources/%s", nameLower)
+	return c.updateSourceObject(ctx, "service definition", objectPath, objectPath+"/source/main", name, source)
+}
+
 // --- DDIC property objects (domains, data elements) ---
 //
 // Domains and data elements are not source-text objects: they are defined by
@@ -2768,16 +2811,16 @@ func (c *ADTClientImpl) CreateDataElement(ctx context.Context, name string, prop
 func (c *ADTClientImpl) UpdateDataElement(ctx context.Context, name string, props types.DataElementProperties) error {
 	name = strings.ToUpper(strings.TrimSpace(name))
 	inner := dataElementInner{
-		ShortLabel:   props.ShortLabel,
-		ShortLength:  10,
+		ShortLabel:       props.ShortLabel,
+		ShortLength:      10,
 		ShortMaxLength:   10,
-		MediumLabel:  props.MediumLabel,
-		MediumLength: 20,
+		MediumLabel:      props.MediumLabel,
+		MediumLength:     20,
 		MediumMaxLength:  20,
-		LongLabel:    props.LongLabel,
-		LongLength:   40,
+		LongLabel:        props.LongLabel,
+		LongLength:       40,
 		LongMaxLength:    40,
-		HeadingLabel: props.HeadingLabel,
+		HeadingLabel:     props.HeadingLabel,
 		HeadingLength:    55,
 		HeadingMaxLength: 55,
 	}
@@ -2809,6 +2852,260 @@ func (c *ADTClientImpl) UpdateDataElement(ctx context.Context, name string, prop
 		return fmt.Errorf("marshal data element properties: %w", err)
 	}
 	return c.setPropertiesAndActivate(ctx, "DATA_ELEMENT", "/ddic/dataelements/"+strings.ToLower(name), name, xml.Header+string(xmlBytes))
+}
+
+// --- Service Bindings (RAP OData exposure of CDS views) ---
+//
+// A Service Binding (SRVB/SVB) is, like domains/data elements, structured
+// metadata rather than source text. Confirmed live against SAP ADT: unlike
+// those DDIC property objects, the *create* call accepts the full binding
+// content (services + binding type) in a single POST — no separate
+// create-shell + set-properties step is needed. Update still requires the
+// lock -> PUT -> unlock -> activate cycle shared with domains/data elements.
+
+type srvbServiceRef struct {
+	Name string `xml:"adtcore:name,attr"`
+}
+
+type srvbContent struct {
+	Version           string         `xml:"srvb:version,attr"`
+	ServiceDefinition srvbServiceRef `xml:"srvb:serviceDefinition"`
+}
+
+type srvbServices struct {
+	Name    string      `xml:"srvb:name,attr"`
+	Content srvbContent `xml:"srvb:content"`
+}
+
+type srvbImplementation struct {
+	Name string `xml:"adtcore:name,attr"`
+}
+
+type srvbBinding struct {
+	Category       string             `xml:"srvb:category,attr"`
+	Type           string             `xml:"srvb:type,attr"`
+	Version        string             `xml:"srvb:version,attr"`
+	Implementation srvbImplementation `xml:"srvb:implementation"`
+}
+
+type serviceBindingPayload struct {
+	XMLName        xml.Name        `xml:"srvb:serviceBinding"`
+	SrvbNS         string          `xml:"xmlns:srvb,attr"`
+	AdtcoreNS      string          `xml:"xmlns:adtcore,attr"`
+	Description    string          `xml:"adtcore:description,attr"`
+	Name           string          `xml:"adtcore:name,attr"`
+	Type           string          `xml:"adtcore:type,attr"`
+	Language       string          `xml:"adtcore:language,attr"`
+	MasterLanguage string          `xml:"adtcore:masterLanguage,attr"`
+	Responsible    string          `xml:"adtcore:responsible,attr"`
+	PackageRef     classPackageRef `xml:"adtcore:packageRef"`
+	Services       srvbServices    `xml:"srvb:services"`
+	Binding        srvbBinding     `xml:"srvb:binding"`
+}
+
+// buildServiceBindingPayload builds the srvb:serviceBinding XML shared by
+// create and update. BindingVersion defaults to "V4" and BindingCategory
+// to "0" (UI) when unset, since this feature targets RAP V4 services.
+func (c *ADTClientImpl) buildServiceBindingPayload(name string, props types.ServiceBindingProperties) ([]byte, error) {
+	version := strings.ToUpper(strings.TrimSpace(props.BindingVersion))
+	if version == "" {
+		version = "V4"
+	}
+	category := strings.TrimSpace(props.BindingCategory)
+	if category == "" {
+		category = "0"
+	}
+	payload := serviceBindingPayload{
+		SrvbNS:         "http://www.sap.com/adt/ddic/ServiceBindings",
+		AdtcoreNS:      "http://www.sap.com/adt/core",
+		Description:    props.Description,
+		Name:           name,
+		Type:           "SRVB/SVB",
+		Language:       "EN",
+		MasterLanguage: "EN",
+		Responsible:    strings.ToUpper(strings.TrimSpace(c.config.Username)),
+		PackageRef:     classPackageRef{Name: "$TMP"},
+		Services: srvbServices{
+			Name: name,
+			Content: srvbContent{
+				Version:           "0001",
+				ServiceDefinition: srvbServiceRef{Name: strings.ToUpper(strings.TrimSpace(props.ServiceDefinitionName))},
+			},
+		},
+		Binding: srvbBinding{
+			Category:       category,
+			Type:           "ODATA",
+			Version:        version,
+			Implementation: srvbImplementation{Name: ""},
+		},
+	}
+	xmlBytes, err := xml.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal service binding: %w", err)
+	}
+	return xmlBytes, nil
+}
+
+// CreateServiceBinding creates a Service Binding (SRVB/SVB), exposing a
+// Service Definition as an OData service. The object is created inactive
+// and then activated; call PublishServiceBinding afterward to register the
+// runtime OData endpoint.
+func (c *ADTClientImpl) CreateServiceBinding(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	xmlBytes, err := c.buildServiceBindingPayload(name, props)
+	if err != nil {
+		return err
+	}
+	if err := c.createObjectMetadata(ctx, "/businessservices/bindings", xml.Header+string(xmlBytes)); err != nil {
+		return fmt.Errorf("create service binding %s: %w", name, err)
+	}
+	// Service bindings need the same adtcore:-prefixed activation form as
+	// domains/data elements (confirmed live) — the generic default-namespace
+	// form produces an empty activation worklist for these metadata-only types.
+	if err := c.activateDDICPropertyObject(ctx, "/businessservices/bindings/"+strings.ToLower(name), name); err != nil {
+		return fmt.Errorf("failed to activate service binding %s: %w", name, err)
+	}
+	return nil
+}
+
+// UpdateServiceBinding updates an existing Service Binding's properties and activates it.
+func (c *ADTClientImpl) UpdateServiceBinding(ctx context.Context, name string, props types.ServiceBindingProperties) error {
+	name = strings.ToUpper(strings.TrimSpace(name))
+	xmlBytes, err := c.buildServiceBindingPayload(name, props)
+	if err != nil {
+		return err
+	}
+	return c.setPropertiesAndActivate(ctx, "SERVICE_BINDING", "/businessservices/bindings/"+strings.ToLower(name), name, xml.Header+string(xmlBytes))
+}
+
+// serviceBindingReadResponse parses the srvb:serviceBinding XML returned by
+// GET. Go's xml package matches elements/attributes by local name, so the
+// srvb:/adtcore: namespace prefixes in the live response don't need to be
+// declared in these tags.
+type serviceBindingReadResponse struct {
+	XMLName     xml.Name `xml:"serviceBinding"`
+	Name        string   `xml:"name,attr"`
+	Description string   `xml:"description,attr"`
+	Version     string   `xml:"version,attr"`
+	Published   bool     `xml:"published,attr"`
+	Services    struct {
+		Content struct {
+			Version           string `xml:"version,attr"`
+			ServiceDefinition struct {
+				Name string `xml:"name,attr"`
+			} `xml:"serviceDefinition"`
+		} `xml:"content"`
+	} `xml:"services"`
+	Binding struct {
+		Category string `xml:"category,attr"`
+		Version  string `xml:"version,attr"`
+	} `xml:"binding"`
+}
+
+// GetServiceBinding retrieves a Service Binding's properties.
+func (c *ADTClientImpl) GetServiceBinding(ctx context.Context, name string) (*types.ADTServiceBinding, error) {
+	if !c.IsAuthenticated() {
+		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+	name = strings.ToUpper(strings.TrimSpace(name))
+	reqURL := fmt.Sprintf("%s/businessservices/bindings/%s", c.baseURL, strings.ToLower(name))
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Accept", "application/vnd.sap.adt.businessservices.servicebinding.v2+xml")
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("get service binding failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: SRVB %s", ErrNotFound, name)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get service binding %s: HTTP %d - %s", name, resp.StatusCode, string(body))
+	}
+	var parsed serviceBindingReadResponse
+	if err := xml.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse service binding response: %w", err)
+	}
+	return &types.ADTServiceBinding{
+		Name:                  name,
+		Description:           parsed.Description,
+		ServiceDefinitionName: parsed.Services.Content.ServiceDefinition.Name,
+		BindingVersion:        parsed.Binding.Version,
+		BindingCategory:       parsed.Binding.Category,
+		Version:               parsed.Version,
+		Published:             parsed.Published,
+	}, nil
+}
+
+// servicePublishResponse parses the asx:abap SEVERITY/SHORT_TEXT/LONG_TEXT
+// response returned by the odatav4 publishjobs endpoint.
+type servicePublishResponse struct {
+	XMLName xml.Name `xml:"abap"`
+	Values  struct {
+		Data struct {
+			Severity  string `xml:"SEVERITY"`
+			ShortText string `xml:"SHORT_TEXT"`
+			LongText  string `xml:"LONG_TEXT"`
+		} `xml:"DATA"`
+	} `xml:"values"`
+}
+
+// PublishServiceBinding registers a Service Binding's OData V4 service at
+// runtime. Confirmed live: the binding must already be created and active
+// (see CreateServiceBinding) before this succeeds.
+func (c *ADTClientImpl) PublishServiceBinding(ctx context.Context, name string) (*types.ServiceBindingPublishResult, error) {
+	if !c.IsAuthenticated() {
+		return nil, fmt.Errorf("client not authenticated - call Authenticate() first")
+	}
+	name = strings.ToUpper(strings.TrimSpace(name))
+	payload := fmt.Sprintf(
+		`<?xml version="1.0" encoding="UTF-8"?>`+"\n"+
+			`<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">`+
+			`<adtcore:objectReference adtcore:uri="/sap/bc/adt/businessservices/bindings/%s" adtcore:type="SRVB/SVB" adtcore:name="%s"/>`+
+			`</adtcore:objectReferences>`,
+		strings.ToLower(name), name,
+	)
+	reqURL := c.baseURL + "/businessservices/odatav4/publishjobs"
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create publish request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	req.Header.Set("Accept", "application/*")
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("publish request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read publish response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("publish service binding %s failed: HTTP %d - %s", name, resp.StatusCode, string(body))
+	}
+	var parsed servicePublishResponse
+	result := &types.ServiceBindingPublishResult{}
+	if err := xml.Unmarshal(body, &parsed); err == nil {
+		result.Severity = parsed.Values.Data.Severity
+		result.ShortText = parsed.Values.Data.ShortText
+		result.LongText = parsed.Values.Data.LongText
+	}
+	c.logger.Info("Service binding publish requested",
+		zap.String("name", name),
+		zap.String("severity", result.Severity),
+		zap.String("message", result.ShortText))
+	return result, nil
 }
 
 // setPropertiesAndActivate runs the lock -> PUT properties -> unlock -> activate
@@ -2850,25 +3147,7 @@ func (c *ADTClientImpl) activateDDICPropertyObject(ctx context.Context, objectPa
 			`</adtcore:objectReferences>`,
 		adtURI, strings.ToUpper(name),
 	)
-	activateURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
-	req, err := http.NewRequestWithContext(ctx, "POST", activateURL, strings.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("failed to create activation request: %w", err)
-	}
-	c.addAuthHeaders(req)
-	req.Header.Set("Content-Type", "application/*")
-	req.Header.Set("Accept", "application/*")
-	req.Header.Set("X-CSRF-Token", c.csrfToken)
-	resp, err := c.doRequest(req)
-	if err != nil {
-		return fmt.Errorf("activation request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
-	}
-	return nil
+	return c.activatePayloadWithRetry(ctx, payload, name)
 }
 
 // putObjectProperties PUTs a structured-properties XML body to a DDIC object URL
@@ -2918,21 +3197,163 @@ func objectTypeToURI(objectType, objectName string) (string, error) {
 		return fmt.Sprintf("/sap/bc/adt/ddic/domains/%s", name), nil
 	case "DTEL", "DATA_ELEMENT":
 		return fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", name), nil
+	case "SRVD", "SERVICE_DEFINITION":
+		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", name), nil
+	case "SRVB", "SERVICE_BINDING":
+		return fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", name), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for activation: %s", objectType)
 	}
 }
 
-// ActivationResponse XML structures for parsing activation results
+// ActivationResponse parses the chkl:messages checklist XML returned by the
+// ADT activation endpoint. SAP always answers HTTP 200 for this call —
+// whether activation actually succeeded is only knowable from these
+// messages: confirmed live, a "type=E" message (e.g. a syntax/reference
+// error) still comes back with HTTP 200, leaving the object inactive.
+//
+// checkExecuted="false" (with no <msg> elements at all) is a third, distinct
+// outcome confirmed live: SAP returns this when activation is attempted too
+// soon after unlocking a just-created object — the check silently never ran
+// rather than erroring, and a retry moments later succeeds. This is NOT the
+// same as a real pass (which has checkExecuted="true" and no error message)
+// and must not be treated as success.
 type ActivationResponse struct {
-	XMLName  xml.Name             `xml:"messages"`
+	XMLName    xml.Name `xml:"messages"`
+	Properties struct {
+		CheckExecuted bool `xml:"checkExecuted,attr"`
+	} `xml:"properties"`
 	Messages []ActivationMsgEntry `xml:"msg"`
 }
 
 type ActivationMsgEntry struct {
-	Severity string `xml:"severity,attr"`
-	Text     string `xml:",chardata"`
-	Href     string `xml:"href,attr,omitempty"`
+	Severity  string   `xml:"type,attr"`
+	Href      string   `xml:"href,attr,omitempty"`
+	ShortText []string `xml:"shortText>txt"`
+}
+
+// Text joins the (possibly multi-line) shortText of an activation message.
+func (m ActivationMsgEntry) Text() string {
+	return strings.TrimSpace(strings.Join(m.ShortText, " "))
+}
+
+// isActivationError reports whether an activation checklist message
+// severity indicates the object was NOT actually activated ("E"rror or
+// "A"bort, per the chkl:messages type attribute).
+func isActivationError(severity string) bool {
+	return severity == "E" || severity == "A" || severity == "error"
+}
+
+// activationChecklistOutcome parses SAP's chkl:messages checklist body from
+// POST /activation, returning whether the check actually ran and the joined
+// text of any error/abort-severity messages ("" if none). A checkExecuted
+// of false (typically with zero messages) means SAP never actually attempted
+// the check — confirmed live, this happens when activation is requested too
+// soon after unlocking a just-created object — and must not be read as success.
+func activationChecklistOutcome(body []byte) (checkExecuted bool, errText string) {
+	var resp ActivationResponse
+	if err := xml.Unmarshal(body, &resp); err != nil {
+		return false, ""
+	}
+	var texts []string
+	for _, msg := range resp.Messages {
+		if isActivationError(msg.Severity) {
+			texts = append(texts, msg.Text())
+		}
+	}
+	return resp.Properties.CheckExecuted, strings.Join(texts, "; ")
+}
+
+// activationChecklistError extracts a human-readable error from the
+// chkl:messages checklist body returned by POST /activation, or nil if it
+// contains no error-severity messages. SAP answers HTTP 200 for this
+// endpoint regardless of outcome, so this — not the status code — is what
+// determines whether the object actually activated.
+func activationChecklistError(body []byte) error {
+	_, errText := activationChecklistOutcome(body)
+	if errText == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", errText)
+}
+
+// activationRetryDelays are the backoff intervals between activation
+// attempts when SAP reports checkExecuted="false" (the check silently never
+// ran). With the correct adtcore:-prefixed activation payload this succeeds
+// on the first attempt in normal operation; these retries are cheap
+// insurance against the same occasional backend settling delay SAP's own
+// businessservices/odatav4/publishjobs endpoint acknowledges via its
+// "please try publishing again later" message.
+var activationRetryDelays = []time.Duration{0, 500 * time.Millisecond, 1500 * time.Millisecond, 3 * time.Second}
+
+// postActivationPayload POSTs a pre-built activation request body and
+// reports whether SAP's check actually executed, along with the joined text
+// of any error-severity checklist messages. It does not retry — callers
+// loop using activationRetryDelays.
+func (c *ADTClientImpl) postActivationPayload(ctx context.Context, payload string) (checkExecuted bool, errText string, err error) {
+	activateURL := c.baseURL + "/activation?method=activate&preauditRequested=true&sap-client=" + c.config.Client + "&sap-language=" + c.config.Language
+	req, err := http.NewRequestWithContext(ctx, "POST", activateURL, strings.NewReader(payload))
+	if err != nil {
+		return false, "", fmt.Errorf("failed to create activation request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/*")
+	req.Header.Set("Accept", "application/*")
+	req.Header.Set("X-CSRF-Token", c.csrfToken)
+	resp, err := c.doRequest(req)
+	if err != nil {
+		return false, "", fmt.Errorf("activation request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return false, "", fmt.Errorf("activation failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+	checked, msgText := activationChecklistOutcome(body)
+	return checked, msgText, nil
+}
+
+// activatePayloadWithRetry drives postActivationPayload through
+// activationRetryDelays, returning an error unless SAP confirms the check
+// actually ran (checkExecuted) with no error-severity messages.
+func (c *ADTClientImpl) activatePayloadWithRetry(ctx context.Context, payload, name string) error {
+	for _, d := range activationRetryDelays {
+		if d > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(d):
+			}
+		}
+		checked, errText, err := c.postActivationPayload(ctx, payload)
+		if err != nil {
+			return err
+		}
+		if !checked {
+			continue
+		}
+		if errText != "" {
+			return fmt.Errorf("activation of %s failed: %s", name, errText)
+		}
+		return nil
+	}
+	return fmt.Errorf("activation of %s could not be confirmed after %d attempts (SAP never executed the check)", name, len(activationRetryDelays))
+}
+
+// activateWithRetry builds the default-namespace objectReferences activation
+// payload (used for source-text objects) and drives it through
+// activatePayloadWithRetry.
+func (c *ADTClientImpl) activateWithRetry(ctx context.Context, uri, name string) error {
+	activationReq := ActivationRequest{
+		Namespace: "http://www.sap.com/adt/core",
+		ObjectRef: ActivationRef{URI: uri, Name: strings.ToUpper(name)},
+	}
+	xmlPayload, err := xml.Marshal(activationReq)
+	if err != nil {
+		return fmt.Errorf("marshal activation: %w", err)
+	}
+	payload := `<?xml version="1.0" encoding="UTF-8"?>` + "\n" + string(xmlPayload)
+	return c.activatePayloadWithRetry(ctx, payload, name)
 }
 
 // ActivateObject activates an ABAP object (program, class, interface, etc.)
@@ -3003,9 +3424,9 @@ func (c *ADTClientImpl) ActivateObject(ctx context.Context, objectType, objectNa
 			for _, msg := range activationResp.Messages {
 				result.Messages = append(result.Messages, types.ActivationMessage{
 					Severity: msg.Severity,
-					Text:     strings.TrimSpace(msg.Text),
+					Text:     msg.Text(),
 				})
-				if msg.Severity == "error" || msg.Severity == "E" {
+				if isActivationError(msg.Severity) {
 					result.Success = false
 				}
 			}
