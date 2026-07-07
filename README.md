@@ -9,7 +9,7 @@
 ABAPer connects an AI agent to your SAP system over ADT, so you can generate, deploy, test, and refactor ABAP objects without leaving the command line. Ask it to write a report and deploy it; have it read a class, find the bug, and activate the fix. It's also a Go SDK and LSP server, so you can automate SAP workflows in code or bring ABAP intelligence to any editor.
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/abaper/main/install.sh)"
+sh -c "$(curl -fsSL https://bluefunda.com/abaper/install.sh)"
 abaper login
 abaper                # opens the interactive AI chat
 ```
@@ -122,7 +122,7 @@ srv.RunStdio()       // stdio transport (most editors); or srv.RunTCP(":2087")
 **One-line installer (macOS / Linux)** — installs to `/usr/local/bin`, else `~/.local/bin`; override with `ABAPER_INSTALL_DIR`:
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/abaper/main/install.sh)"
+sh -c "$(curl -fsSL https://bluefunda.com/abaper/install.sh)"
 ```
 
 **Homebrew (macOS)**
