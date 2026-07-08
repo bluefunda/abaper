@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.5](https://github.com/bluefunda/abaper/compare/v1.16.4...v1.16.5) (2026-07-08)
+
+
+### Bug Fixes
+
+* **login:** update login command description to reflect bai delegation ([#119](https://github.com/bluefunda/abaper/issues/119)) ([41c5ae5](https://github.com/bluefunda/abaper/commit/41c5ae5319317fdff83a53369b0c8238fe9ef785))
+
 ## [1.16.4](https://github.com/bluefunda/abaper/compare/v1.16.3...v1.16.4) (2026-07-08)
 
 
