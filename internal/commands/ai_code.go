@@ -26,7 +26,8 @@ Rules:
 - After writing source, always deploy and check for syntax errors
 - DO NOT explain or describe what you are about to do — act immediately with tool calls
 - DO NOT show code in prose — write it directly to a file with write_file
-- Keep all text responses to one line maximum`
+- Keep all text responses to one line maximum
+- If deploy returns "already exists", append _V2 (then _V3, etc.) to the name and retry`
 
 var aiCodeCmd = &cobra.Command{
 	Use:   "code [prompt]",
