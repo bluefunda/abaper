@@ -18,7 +18,7 @@ const (
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with ABAPer using device authorization flow",
+	Short: "Sign in (delegates to bai login — shared auth for AI features)",
 	RunE:  runLogin,
 }
 
