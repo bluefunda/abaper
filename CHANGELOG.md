@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.6](https://github.com/bluefunda/abaper/compare/v1.16.5...v1.16.6) (2026-07-08)
+
+
+### Bug Fixes
+
+* **client:** send description on object create so server takes create path ([#121](https://github.com/bluefunda/abaper/issues/121)) ([cac7f8b](https://github.com/bluefunda/abaper/commit/cac7f8bb23afeb8bae8d4f401272ed57fdfd428f))
+
 ## [1.16.5](https://github.com/bluefunda/abaper/compare/v1.16.4...v1.16.5) (2026-07-08)
 
 
