@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.1](https://github.com/bluefunda/abaper/compare/v1.16.0...v1.16.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ai:** bump bluefunda-ai to v1.35.1 — fixes LLM routing failed on every prompt ([#110](https://github.com/bluefunda/abaper/issues/110)) ([d45995f](https://github.com/bluefunda/abaper/commit/d45995fe85a324af4a895b3c3ac00cacb0661c54))
+
 ## [1.16.0](https://github.com/bluefunda/abaper/compare/v1.15.1...v1.16.0) (2026-07-03)
 
 
