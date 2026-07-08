@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.3](https://github.com/bluefunda/abaper/compare/v1.16.2...v1.16.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **rest:** auto-create program stub when deploy target doesn't exist ([#114](https://github.com/bluefunda/abaper/issues/114)) ([f005f80](https://github.com/bluefunda/abaper/commit/f005f805e28056ee1aeec3641fd76c6a7ea8ad23))
+
 ## [1.16.2](https://github.com/bluefunda/abaper/compare/v1.16.1...v1.16.2) (2026-07-08)
 
 
