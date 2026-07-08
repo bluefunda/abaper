@@ -248,12 +248,15 @@ func (c *Client) GetObject(objectType, objectName string) (*map[string]any, erro
 	return Post[map[string]any](c, "/api/v1/objects/get", body)
 }
 
-// CreateObject saves an ABAP object with source code.
+// CreateObject creates a new ABAP object with source code. A non-empty
+// description is required so the server routes this through its create
+// path rather than its save/update path (see rest/server createObjectHandler).
 func (c *Client) CreateObject(objectName, objectType, source string) error {
 	body := map[string]string{
 		"object_name": objectName,
 		"object_type": objectType,
 		"source":      source,
+		"description": fmt.Sprintf("%s %s", objectType, objectName),
 	}
 	_, err := Post[map[string]any](c, "/api/v1/objects/create", body)
 	return err
