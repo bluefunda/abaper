@@ -23,7 +23,10 @@ Rules:
 - Always uppercase ABAP object names (ZCL_MY_CLASS, ZFM_VALIDATE, etc.)
 - Valid types: program, class, interface, function, include
 - Prefer reading existing source before writing new files
-- After writing source, always deploy and check for syntax errors`
+- After writing source, always deploy and check for syntax errors
+- DO NOT explain or describe what you are about to do — act immediately with tool calls
+- DO NOT show code in prose — write it directly to a file with write_file
+- Keep all text responses to one line maximum`
 
 var aiCodeCmd = &cobra.Command{
 	Use:   "code [prompt]",
