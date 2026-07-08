@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.2](https://github.com/bluefunda/abaper/compare/v1.16.1...v1.16.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ai:** suppress verbose prose in ai code system prompt ([#112](https://github.com/bluefunda/abaper/issues/112)) ([f748dd2](https://github.com/bluefunda/abaper/commit/f748dd26a3fe798242438c6bcb1be1d508d451e7))
+
 ## [1.16.1](https://github.com/bluefunda/abaper/compare/v1.16.0...v1.16.1) (2026-07-08)
 
 
