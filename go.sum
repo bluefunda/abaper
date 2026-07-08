@@ -16,8 +16,8 @@ github.com/aymerick/douceur v0.2.0 h1:Mv+mAeH1Q+n9Fr+oyamOlAkUNPWPlA8PPGR0QAaYuP
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=
 github.com/bluefunda/banner v0.1.0 h1:VDH0OQIua3VjHb2KcsYLukXupFY+4tpQ1MBEOEFQR+Y=
 github.com/bluefunda/banner v0.1.0/go.mod h1:M5mtbgvRhaWJ++YScYqA1dNnc19WKm3Ne0rDmZoobo4=
-github.com/bluefunda/bluefunda-ai v1.34.0 h1:ScmxNa2h4GGh5NqixLlBXOkYnRe5hvi4lfxjMz3VyyU=
-github.com/bluefunda/bluefunda-ai v1.34.0/go.mod h1:nalIor3juYX6S93nNKI+4nd7ew7nXGsf2s65sy+VtOs=
+github.com/bluefunda/bluefunda-ai v1.35.1 h1:tLbe0+95lRDm+u+xAKyuFmynuXwxuoCpEr6XC4b5C7Y=
+github.com/bluefunda/bluefunda-ai v1.35.1/go.mod h1:N+B9E4JOzBKVdWH1HetZittRBGHdnho5HYxMW3QrKzU=
 github.com/bluefunda/go-update v0.1.1 h1:sW7b5qQigHFBhwjBhVkIXSma0FtXo0iUvDuZ28OmkX0=
 github.com/bluefunda/go-update v0.1.1/go.mod h1:OXECIVc6XVlW22jDsF9g9GyPrj/Maqu5nBBwYii1d5A=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
@@ -153,8 +153,8 @@ github.com/tliron/go-kutil v0.4.0 h1:5JwcBacgnqS3XyhwCWZKvq8ftlbVttNXnt+kfCH+Y2E
 github.com/tliron/go-kutil v0.4.0/go.mod h1:hpHVq+CP1uci2M208UEjPiPwsRsz/QweGBnLB3CaQ24=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e/go.mod h1:RbqR21r5mrJuqunuUZ/Dhy/avygyECGrLceyNeo4LiM=
-github.com/yuin/goldmark v1.7.13 h1:GPddIs617DnBLFFVJFgpo1aBfe/4xcvMc3SB5t/D0pA=
-github.com/yuin/goldmark v1.7.13/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
+github.com/yuin/goldmark v1.7.17 h1:p36OVWwRb246iHxA/U4p8OPEpOTESm4n+g+8t0EE5uA=
+github.com/yuin/goldmark v1.7.17/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
 github.com/yuin/goldmark-emoji v1.0.6 h1:QWfF2FYaXwL74tfGOW5izeiZepUDroDJfWubQI9HTHs=
 github.com/yuin/goldmark-emoji v1.0.6/go.mod h1:ukxJDKFpdFb5x0a5HqbdlcKtebh086iJpI31LTKmWuA=
 go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
