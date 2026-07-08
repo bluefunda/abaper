@@ -308,17 +308,42 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// abaper-ts convention: source without description means SAVE, not CREATE.
 	// editor saveObject() and mcp UpdateObject() both POST here with source+no description.
+	// If the object does not yet exist we create a stub first (SE38 create-then-code pattern)
+	// so that the very first deploy of a new program also works.
 	if req.Source != "" && req.Description == "" {
+		pkgForStub := req.Package
+		if pkgForStub == "" {
+			pkgForStub = "$TMP"
+		}
+
 		var saveErr error
 		switch objectType {
 		case "PROGRAM", "PROG":
+			if _, getErr := c.GetProgram(ctx, objectName); getErr != nil {
+				if createErr := c.CreateProgram(ctx, objectName, objectName, pkgForStub, ""); createErr != nil {
+					rs.sendError(w, createErr.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
 			saveErr = c.UpdateProgram(ctx, objectName, req.Source)
 		case "CLASS", "CLAS":
+			if _, getErr := c.GetClass(ctx, objectName); getErr != nil {
+				if createErr := c.CreateClass(ctx, objectName, objectName, pkgForStub, ""); createErr != nil {
+					rs.sendError(w, createErr.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
 			saveErr = c.UpdateClass(ctx, objectName, req.Source)
+		case "INTERFACE", "INTF":
+			if _, getErr := c.GetInterface(ctx, objectName); getErr != nil {
+				if createErr := c.CreateInterface(ctx, objectName, objectName, ""); createErr != nil {
+					rs.sendError(w, createErr.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			saveErr = c.UpdateInterface(ctx, objectName, req.Source)
 		case "INCLUDE", "INCL":
 			saveErr = c.UpdateInclude(ctx, objectName, req.Source)
-		case "INTERFACE", "INTF":
-			saveErr = c.UpdateInterface(ctx, objectName, req.Source)
 		case "FUNCTION", "FUNC":
 			if len(req.Args) == 0 {
 				rs.sendError(w, "function group required in args for function modules", http.StatusBadRequest)
