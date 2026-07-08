@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.4](https://github.com/bluefunda/abaper/compare/v1.16.3...v1.16.4) (2026-07-08)
+
+
+### Bug Fixes
+
+* **ai:** retry with _V2/_V3 suffix when deploy returns already exists ([#115](https://github.com/bluefunda/abaper/issues/115)) ([4e230db](https://github.com/bluefunda/abaper/commit/4e230db8d6d50600d69189c8e071e04a30f819ba))
+
 ## [1.16.3](https://github.com/bluefunda/abaper/compare/v1.16.2...v1.16.3) (2026-07-08)
 
 
