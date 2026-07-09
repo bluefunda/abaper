@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -71,12 +72,12 @@ func TestDo_SetsSAPHeadersWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestDo_RetriesOn5xx(t *testing.T) {
+func TestDo_RetriesOnTransientStatus(t *testing.T) {
 	attempts := 0
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		if attempts < 3 {
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		writeAPIResponse(t, w, map[string]string{"ok": "true"})
@@ -88,6 +89,33 @@ func TestDo_RetriesOn5xx(t *testing.T) {
 	}
 	if attempts != 3 {
 		t.Errorf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestDo_DoesNotRetryPlain500(t *testing.T) {
+	// A 500 is almost always a deterministic application error (already
+	// exists, syntax error, activation failure) — retrying it just wastes
+	// time and can turn a clear error into a confusing "already exists" on
+	// a later attempt after a partial create. It should fail immediately
+	// with the real body intact, not a generic "HTTP 500".
+	attempts := 0
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error":   "no component exists with the name CARRID",
+		})
+	})
+	_, err := Post[map[string]string](c, "/api/v1/health", nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Errorf("expected exactly 1 attempt (no retry on plain 500), got %d", attempts)
+	}
+	if !strings.Contains(err.Error(), "CARRID") {
+		t.Errorf("expected real error body to survive, got: %v", err)
 	}
 }
 
@@ -204,17 +232,42 @@ func TestCreateObject(t *testing.T) {
 	}
 }
 
-func TestActivate_UsesObjectsActivateRoute(t *testing.T) {
+func TestActivate_UsesActivateRoute(t *testing.T) {
 	var gotPath string
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
-		writeAPIResponse(t, w, map[string]any{"success": true})
+		writeAPIResponse(t, w, map[string]any{"activated": true})
 	})
-	if _, err := c.Activate("ZFOO", "program"); err != nil {
+	result, err := c.Activate("ZFOO", "program")
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotPath != "/abaper/api/v1/objects/activate" {
-		t.Errorf("expected Activate to hit /api/v1/objects/activate, got %q", gotPath)
+	if gotPath != "/abaper/api/v1/activate" {
+		t.Errorf("expected Activate to hit /api/v1/activate (the /objects/activate route 404s through the gateway), got %q", gotPath)
+	}
+	if !result.Activated {
+		t.Errorf("expected Activated to be true")
+	}
+}
+
+func TestActivate_ReportsFailedActivation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writeAPIResponse(t, w, map[string]any{
+			"activated": false,
+			"messages": []map[string]any{
+				{"severity": "E", "text": `No component exists with the name "CARRID".`, "line": 4},
+			},
+		})
+	})
+	result, err := c.Activate("ZFOO", "program")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Activated {
+		t.Errorf("expected Activated to be false")
+	}
+	if len(result.Messages) != 1 || result.Messages[0].Severity != "E" {
+		t.Errorf("expected one error message, got %+v", result.Messages)
 	}
 }
 
