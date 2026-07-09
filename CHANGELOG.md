@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.7](https://github.com/bluefunda/abaper/compare/v1.16.6...v1.16.7) (2026-07-09)
+
+
+### Bug Fixes
+
+* **client:** stop masking real ADT errors; test(adt,rest): add end-to-end coverage ([#128](https://github.com/bluefunda/abaper/issues/128)) ([7df11e1](https://github.com/bluefunda/abaper/commit/7df11e122d927d8174b7531627559700dc6d50b3))
+
 ## [1.16.6](https://github.com/bluefunda/abaper/compare/v1.16.5...v1.16.6) (2026-07-08)
 
 
