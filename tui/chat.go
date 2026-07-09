@@ -98,7 +98,7 @@ func newChatModel(version string) *chatModel {
 		version:  version,
 		spinner:  sp,
 		textarea: ta,
-		model:    "auto",
+		model:    "fast",
 	}
 
 	// Runner is created once per TUI session. OnEvent writes to m.currentCh,

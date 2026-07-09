@@ -40,7 +40,7 @@ task is complete or the turn limit is reached.`,
 }
 
 func init() {
-	aiCodeCmd.Flags().String("model", "auto", "LLM model alias: auto, fast, think")
+	aiCodeCmd.Flags().String("model", "fast", "LLM model alias: auto, fast, think")
 	aiCodeCmd.Flags().Int("max-turns", 20, "Maximum agentic loop iterations")
 	aiCodeCmd.Flags().String("context-file", "", "Seed the session with an ABAP source file")
 

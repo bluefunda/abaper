@@ -28,7 +28,7 @@ For an interactive multi-turn agentic session use: abaper ai code`,
 }
 
 func init() {
-	aiChatCmd.Flags().String("model", "auto", "LLM model alias: auto, fast, think")
+	aiChatCmd.Flags().String("model", "fast", "LLM model alias: auto, fast, think")
 	aiChatCmd.Flags().String("context-file", "", "ABAP source file to include as context")
 
 	aiCmd.AddCommand(aiChatCmd)
