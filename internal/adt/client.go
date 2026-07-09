@@ -4190,12 +4190,12 @@ func (c *ADTClientImpl) CreateTransport(ctx context.Context, objectType, objectN
 		return "", err
 	}
 
-	url := fmt.Sprintf("%s%s%s?sap-client=%s&sap-language=%s&description=%s&devclass=%s",
+	reqURL := fmt.Sprintf("%s%s%s?sap-client=%s&sap-language=%s&description=%s&devclass=%s",
 		c.baseURL, basePath, createTransportSuffix,
 		c.config.Client, c.config.Language,
-		description, packageName)
+		url.QueryEscape(description), url.QueryEscape(packageName))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}

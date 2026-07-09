@@ -58,6 +58,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	outputFmt, _ := cmd.Flags().GetString("output")
+	if !result.Activated {
+		if outputFmt == "json" {
+			output.PrintJSON(result)
+		}
+		return fmt.Errorf("activation failed: %s", formatActivationMessages(result.Messages))
+	}
+
 	if outputFmt == "json" {
 		output.PrintJSON(result)
 	} else {
@@ -65,4 +72,19 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func formatActivationMessages(messages []client.ActivateMessage) string {
+	if len(messages) == 0 {
+		return "no details returned"
+	}
+	parts := make([]string, 0, len(messages))
+	for _, m := range messages {
+		if m.Line > 0 {
+			parts = append(parts, fmt.Sprintf("[%s] line %d: %s", m.Severity, m.Line, m.Text))
+		} else {
+			parts = append(parts, fmt.Sprintf("[%s] %s", m.Severity, m.Text))
+		}
+	}
+	return strings.Join(parts, "; ")
 }

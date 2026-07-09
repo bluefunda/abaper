@@ -118,9 +118,15 @@ func (c *Client) Do(method, path string, body any) (*http.Response, error) {
 			continue
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		// Only retry genuinely transient conditions. Most application-level
+		// failures (already exists, syntax/activation errors, ADT lock
+		// errors) also come back as 5xx, and are deterministic — retrying
+		// them just wastes time and, for non-idempotent creates, can turn a
+		// clear error into a confusing "already exists" on the next attempt.
+		if isRetryableStatus(resp.StatusCode) {
+			text, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(text))
 			time.Sleep(time.Duration(attempt+1) * time.Second)
 			continue
 		}
@@ -129,6 +135,15 @@ func (c *Client) Do(method, path string, body any) (*http.Response, error) {
 	}
 
 	return nil, fmt.Errorf("request failed after retries: %w", lastErr)
+}
+
+func isRetryableStatus(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 // Post sends a POST request and decodes the response into the target type.
@@ -262,13 +277,32 @@ func (c *Client) CreateObject(objectName, objectType, source string) error {
 	return err
 }
 
-// Activate activates an ABAP object.
-func (c *Client) Activate(objectName, objectType string) (*map[string]any, error) {
+// ActivateMessage is a single message returned by an activation attempt.
+type ActivateMessage struct {
+	Severity string `json:"severity"` // "E", "W", "I"
+	Text     string `json:"text"`
+	Line     int    `json:"line,omitempty"`
+}
+
+// ActivateResult is the outcome of an activation attempt. Activated is false
+// when SAP rejected activation (syntax/semantic errors, cancelled edits,
+// etc.) even though the HTTP call itself succeeded — callers must check it,
+// not just the error return.
+type ActivateResult struct {
+	ObjectName string            `json:"object_name"`
+	ObjectType string            `json:"object_type"`
+	Activated  bool              `json:"activated"`
+	Messages   []ActivateMessage `json:"messages,omitempty"`
+}
+
+// Activate activates an ABAP object. Note: the working route is
+// /api/v1/activate — /api/v1/objects/activate 404s through the gateway.
+func (c *Client) Activate(objectName, objectType string) (*ActivateResult, error) {
 	body := map[string]string{
 		"object_name": objectName,
 		"object_type": objectType,
 	}
-	return Post[map[string]any](c, "/api/v1/objects/activate", body)
+	return Post[ActivateResult](c, "/api/v1/activate", body)
 }
 
 // SyntaxCheck runs syntax validation on source code.

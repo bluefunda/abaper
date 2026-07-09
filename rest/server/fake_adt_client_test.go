@@ -14,6 +14,22 @@ type fakeADTClient struct {
 	testConnErr   error
 
 	getProgramFn            func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getClassFn              func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getIncludeFn            func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getInterfaceFn          func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getStructureFn          func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getTableFn              func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getFunctionFn           func(ctx context.Context, functionName, functionGroup string) (*types.ADTSourceCode, error)
+	getFunctionGroupFn      func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getDDLSourceFn          func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	createIncludeFn         func(ctx context.Context, name, description, source string) error
+	createInterfaceFn       func(ctx context.Context, name, description, source string) error
+	createStructureFn       func(ctx context.Context, name, description, source string) error
+	createTableFn           func(ctx context.Context, name, description, source string) error
+	createFunctionGroupFn   func(ctx context.Context, name, description, source string) error
+	updateIncludeFn         func(ctx context.Context, name, source string) error
+	updateInterfaceFn       func(ctx context.Context, name, source string) error
+	updateFunctionGroupFn   func(ctx context.Context, name, source string) error
 	getSRVDSourceFn         func(ctx context.Context, name string) (*types.ADTSourceCode, error)
 	getPackageContentsFn    func(ctx context.Context, name string) (*types.ADTPackage, error)
 	getNodeContentsFn       func(ctx context.Context, name string) (*types.PackageContentsResult, error)
@@ -62,27 +78,51 @@ func (f *fakeADTClient) GetProgram(ctx context.Context, name string) (*types.ADT
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "PROGRAM"}, nil
 }
 func (f *fakeADTClient) GetClass(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getClassFn != nil {
+		return f.getClassFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "CLASS"}, nil
 }
 func (f *fakeADTClient) GetInclude(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getIncludeFn != nil {
+		return f.getIncludeFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "INCLUDE"}, nil
 }
 func (f *fakeADTClient) GetInterface(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getInterfaceFn != nil {
+		return f.getInterfaceFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "INTERFACE"}, nil
 }
 func (f *fakeADTClient) GetStructure(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getStructureFn != nil {
+		return f.getStructureFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "STRUCTURE"}, nil
 }
 func (f *fakeADTClient) GetTable(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getTableFn != nil {
+		return f.getTableFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "TABLE"}, nil
 }
 func (f *fakeADTClient) GetFunction(ctx context.Context, functionName, functionGroup string) (*types.ADTSourceCode, error) {
+	if f.getFunctionFn != nil {
+		return f.getFunctionFn(ctx, functionName, functionGroup)
+	}
 	return &types.ADTSourceCode{ObjectName: functionName, ObjectType: "FUNCTION"}, nil
 }
 func (f *fakeADTClient) GetFunctionGroup(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getFunctionGroupFn != nil {
+		return f.getFunctionGroupFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "FUNCTIONGROUP"}, nil
 }
 func (f *fakeADTClient) GetDDLSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+	if f.getDDLSourceFn != nil {
+		return f.getDDLSourceFn(ctx, name)
+	}
 	return &types.ADTSourceCode{ObjectName: name, ObjectType: "DDLS"}, nil
 }
 func (f *fakeADTClient) GetSRVDSource(ctx context.Context, name string) (*types.ADTSourceCode, error) {
@@ -111,18 +151,33 @@ func (f *fakeADTClient) CreateClass(ctx context.Context, name, description, pack
 	return nil
 }
 func (f *fakeADTClient) CreateInclude(ctx context.Context, name, description, source string) error {
+	if f.createIncludeFn != nil {
+		return f.createIncludeFn(ctx, name, description, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) CreateInterface(ctx context.Context, name, description, source string) error {
+	if f.createInterfaceFn != nil {
+		return f.createInterfaceFn(ctx, name, description, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) CreateStructure(ctx context.Context, name, description, source string) error {
+	if f.createStructureFn != nil {
+		return f.createStructureFn(ctx, name, description, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) CreateTable(ctx context.Context, name, description, source string) error {
+	if f.createTableFn != nil {
+		return f.createTableFn(ctx, name, description, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) CreateFunctionGroup(ctx context.Context, name, description, source string) error {
+	if f.createFunctionGroupFn != nil {
+		return f.createFunctionGroupFn(ctx, name, description, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) CreateFunction(ctx context.Context, name, functionGroup, description, source string) error {
@@ -155,8 +210,16 @@ func (f *fakeADTClient) UpdateClass(ctx context.Context, name, source string) er
 	}
 	return nil
 }
-func (f *fakeADTClient) UpdateInclude(ctx context.Context, name, source string) error { return nil }
+func (f *fakeADTClient) UpdateInclude(ctx context.Context, name, source string) error {
+	if f.updateIncludeFn != nil {
+		return f.updateIncludeFn(ctx, name, source)
+	}
+	return nil
+}
 func (f *fakeADTClient) UpdateInterface(ctx context.Context, name, source string) error {
+	if f.updateInterfaceFn != nil {
+		return f.updateInterfaceFn(ctx, name, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) UpdateFunction(ctx context.Context, functionName, functionGroup, source string) error {
@@ -166,6 +229,9 @@ func (f *fakeADTClient) UpdateFunction(ctx context.Context, functionName, functi
 	return nil
 }
 func (f *fakeADTClient) UpdateFunctionGroup(ctx context.Context, name, source string) error {
+	if f.updateFunctionGroupFn != nil {
+		return f.updateFunctionGroupFn(ctx, name, source)
+	}
 	return nil
 }
 func (f *fakeADTClient) UpdateTable(ctx context.Context, name, source string) error {

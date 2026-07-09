@@ -87,6 +87,160 @@ func TestGetObjectHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("class", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			getClassFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				gotName = name
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "CLASS"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "class",
+			"object_name": "zcl_demo",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZCL_DEMO" {
+			t.Errorf("expected uppercased object name, got %q", gotName)
+		}
+	})
+
+	t.Run("include", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getIncludeFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "INCLUDE"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "include",
+			"object_name": "zincl1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "INCLUDE" {
+			t.Errorf("expected ObjectType INCLUDE, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("interface", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getInterfaceFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "INTERFACE"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "interface",
+			"object_name": "zif_demo",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "INTERFACE" {
+			t.Errorf("expected ObjectType INTERFACE, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("structure", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getStructureFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "STRUCTURE"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "structure",
+			"object_name": "zabpbs1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "STRUCTURE" {
+			t.Errorf("expected ObjectType STRUCTURE, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("table", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getTableFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "TABLE"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "table",
+			"object_name": "zabpbt1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "TABLE" {
+			t.Errorf("expected ObjectType TABLE, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("functiongroup", func(t *testing.T) {
+		fake := &fakeADTClient{
+			getFunctionGroupFn: func(ctx context.Context, name string) (*types.ADTSourceCode, error) {
+				return &types.ADTSourceCode{ObjectName: name, ObjectType: "FUNCTIONGROUP"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "functiongroup",
+			"object_name": "zabpb_fg1",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		data := decodeSuccess[types.ADTSourceCode](t, rec)
+		if data.ObjectType != "FUNCTIONGROUP" {
+			t.Errorf("expected ObjectType FUNCTIONGROUP, got %q", data.ObjectType)
+		}
+	})
+
+	t.Run("function", func(t *testing.T) {
+		var gotName, gotGroup string
+		fake := &fakeADTClient{
+			getFunctionFn: func(ctx context.Context, functionName, functionGroup string) (*types.ADTSourceCode, error) {
+				gotName, gotGroup = functionName, functionGroup
+				return &types.ADTSourceCode{ObjectName: functionName, ObjectType: "FUNCTION"}, nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]any{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+			"args":        []string{"zabpb_fg1"},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZABPB_FM1" || gotGroup != "ZABPB_FG1" {
+			t.Errorf("expected name=ZABPB_FM1 group=ZABPB_FG1, got name=%q group=%q", gotName, gotGroup)
+		}
+	})
+
+	t.Run("function requires group in args", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+			"object_type": "function",
+			"object_name": "zabpb_fm1",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("package via get route", func(t *testing.T) {
 		fake := &fakeADTClient{
 			getPackageContentsFn: func(ctx context.Context, name string) (*types.ADTPackage, error) {
@@ -266,6 +420,116 @@ func TestCreateObjectHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("class", func(t *testing.T) {
+		var gotDescription string
+		fake := &fakeADTClient{
+			createClassFn: func(ctx context.Context, name, description, packageName, source string) error {
+				gotDescription = description
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "class",
+			"object_name": "zcl_demo",
+			"description": "Demo class",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotDescription != "Demo class" {
+			t.Errorf("expected description to be passed through, got %q", gotDescription)
+		}
+	})
+
+	t.Run("include", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			createIncludeFn: func(ctx context.Context, name, description, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "include",
+			"object_name": "zincl1",
+			"description": "Demo include",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected CreateInclude to be called")
+		}
+	})
+
+	t.Run("interface", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			createInterfaceFn: func(ctx context.Context, name, description, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "interface",
+			"object_name": "zif_demo",
+			"description": "Demo interface",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected CreateInterface to be called")
+		}
+	})
+
+	t.Run("structure", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			createStructureFn: func(ctx context.Context, name, description, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "structure",
+			"object_name": "zabpbs1",
+			"description": "Demo structure",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected CreateStructure to be called")
+		}
+	})
+
+	t.Run("table", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			createTableFn: func(ctx context.Context, name, description, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+			"object_type": "table",
+			"object_name": "zabpbt1",
+			"description": "Demo table",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected CreateTable to be called")
+		}
+	})
+
 	t.Run("unsupported type", func(t *testing.T) {
 		rs := newTestServer(t, &fakeADTClient{})
 		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
@@ -440,6 +704,165 @@ func TestSaveObjectHandler(t *testing.T) {
 		}
 		if gotSource != "CLASS zcl_demo DEFINITION." {
 			t.Errorf("unexpected source passed through: %q", gotSource)
+		}
+	})
+
+	t.Run("updates program", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			updateProgramFn: func(ctx context.Context, name, source string) error {
+				gotName = name
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "program",
+			"object_name": "zfoo",
+			"source":      "REPORT zfoo.",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZFOO" {
+			t.Errorf("expected uppercased name, got %q", gotName)
+		}
+	})
+
+	t.Run("updates include", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateIncludeFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "include",
+			"object_name": "zincl1",
+			"source":      "* include",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateInclude to be called")
+		}
+	})
+
+	t.Run("updates interface", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateInterfaceFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "interface",
+			"object_name": "zif_demo",
+			"source":      "INTERFACE zif_demo PUBLIC.\nENDINTERFACE.",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateInterface to be called")
+		}
+	})
+
+	t.Run("updates function group", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateFunctionGroupFn: func(ctx context.Context, name, source string) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "functiongroup",
+			"object_name": "zabpb_fg1",
+			"source":      "FUNCTION-POOL zabpb_fg1.",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateFunctionGroup to be called")
+		}
+	})
+
+	t.Run("updates domain via domain_properties", func(t *testing.T) {
+		var gotName string
+		fake := &fakeADTClient{
+			updateDomainFn: func(ctx context.Context, name string, props types.DomainProperties) error {
+				gotName = name
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]any{
+			"object_type": "domain",
+			"object_name": "zwels",
+			"domain_properties": map[string]any{
+				"data_type": "CHAR",
+				"length":    10,
+			},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if gotName != "ZWELS" {
+			t.Errorf("expected uppercased name, got %q", gotName)
+		}
+	})
+
+	t.Run("domain save requires domain_properties", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "domain",
+			"object_name": "zwels",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("updates data element via data_element_properties", func(t *testing.T) {
+		var called bool
+		fake := &fakeADTClient{
+			updateDataElementFn: func(ctx context.Context, name string, props types.DataElementProperties) error {
+				called = true
+				return nil
+			},
+		}
+		rs := newTestServer(t, fake)
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]any{
+			"object_type": "data_element",
+			"object_name": "zdtel_tims",
+			"data_element_properties": map[string]any{
+				"domain_name": "ZWELS",
+			},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !called {
+			t.Error("expected UpdateDataElement to be called")
+		}
+	})
+
+	t.Run("data element save requires data_element_properties", func(t *testing.T) {
+		rs := newTestServer(t, &fakeADTClient{})
+		rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/save", map[string]string{
+			"object_type": "data_element",
+			"object_name": "zdtel_tims",
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
