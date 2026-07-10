@@ -9,6 +9,7 @@ import (
 
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 const abapCodeSystemPrompt = `You are an ABAP expert developer. You write, review, and deploy SAP ABAP code.
@@ -40,9 +41,10 @@ task is complete or the turn limit is reached.`,
 }
 
 func init() {
-	aiCodeCmd.Flags().String("model", "auto", "LLM model alias: auto, fast, think")
+	aiCodeCmd.Flags().String("model", "fast", "LLM model alias: auto, fast, think")
 	aiCodeCmd.Flags().Int("max-turns", 20, "Maximum agentic loop iterations")
 	aiCodeCmd.Flags().String("context-file", "", "Seed the session with an ABAP source file")
+	aiCodeCmd.Flags().Bool("verbose", false, "Show every tool call and its output instead of a collapsed progress line")
 
 	aiCmd.AddCommand(aiCodeCmd)
 }
@@ -51,6 +53,7 @@ func runAICode(cmd *cobra.Command, args []string) error {
 	model, _ := cmd.Flags().GetString("model")
 	maxTurns, _ := cmd.Flags().GetInt("max-turns")
 	contextFile, _ := cmd.Flags().GetString("context-file")
+	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	prompt := strings.Join(args, " ")
 
@@ -65,21 +68,48 @@ func runAICode(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	// Collapse tool-call noise into a single progress line unless the caller
+	// asked for --verbose, or stdout isn't a terminal (piped/redirected output
+	// can't overwrite a line in place, so fall back to the plain per-call log).
+	collapse := !verbose && term.IsTerminal(int(os.Stdout.Fd()))
+	toolCalls := 0
+	progressDrawn := false
+
+	clearProgressLine := func() {
+		if progressDrawn {
+			fmt.Fprint(os.Stderr, "\r\x1b[K")
+			progressDrawn = false
+		}
+	}
+
 	runner := agent.New(agent.Options{
 		Model:    model,
 		MaxTurns: maxTurns,
 		OnEvent: func(ev agent.Event) {
 			switch ev.Type {
 			case "text":
+				clearProgressLine()
 				fmt.Print(ev.Text)
 			case "tool_use":
-				fmt.Fprintf(os.Stderr, "\n[%s]\n", ev.ToolName)
+				toolCalls++
+				if collapse {
+					fmt.Fprintf(os.Stderr, "\r\x1b[KWorking… (%d tool call%s)", toolCalls, plural(toolCalls))
+					progressDrawn = true
+				} else {
+					fmt.Fprintf(os.Stderr, "\n[%s] %s\n", ev.ToolName, truncate(ev.ToolInput, 200))
+				}
+			case "tool_result":
+				if !collapse {
+					fmt.Fprintf(os.Stderr, "  -> %s\n", truncate(ev.ToolOutput, 200))
+				}
 			case "result":
+				clearProgressLine()
 				fmt.Println()
 				if ev.StopReason == "max_turns" {
 					fmt.Fprintf(os.Stderr, "[max turns reached]\n")
 				}
 			case "error":
+				clearProgressLine()
 				fmt.Fprintf(os.Stderr, "\nError: %v\n", ev.Err)
 			}
 		},
@@ -89,6 +119,7 @@ func runAICode(cmd *cobra.Command, args []string) error {
 	runner.WithSystemPrompt(abapCodeSystemPrompt)
 
 	if err := runner.Run(ctx, prompt); err != nil {
+		clearProgressLine()
 		if ctx.Err() != nil {
 			return nil // user cancelled
 		}
@@ -98,4 +129,19 @@ func runAICode(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func truncate(s string, max int) string {
+	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "… (truncated)"
 }
