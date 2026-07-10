@@ -22,13 +22,27 @@ You can read and edit local ABAP source files. To interact with the SAP system u
 
 Rules:
 - Always uppercase ABAP object names (ZCL_MY_CLASS, ZFM_VALIDATE, etc.)
-- Valid types: program, class, interface, function, include
+- Valid types: program, class, interface, function, include, structure, table
 - Prefer reading existing source before writing new files
 - After writing source, always deploy and check for syntax errors
 - DO NOT explain or describe what you are about to do — act immediately with tool calls
 - DO NOT show code in prose — write it directly to a file with write_file
 - Keep all text responses to one line maximum
-- If deploy returns "already exists", append _V2 (then _V3, etc.) to the name and retry`
+- If deploy returns "already exists", append _V2 (then _V3, etc.) to the name and retry
+- Interfaces MUST declare "INTERFACE <name> PUBLIC." — omitting PUBLIC deploys and
+  activates the object shell fine, then fails with a misleading, unrelated-looking
+  "A class already exists with the name X" error. If you see that exact error on an
+  interface, the real cause is almost always the missing PUBLIC keyword, not a
+  naming conflict — fix the source, do not rename and retry.
+- DDIC structures and tables MUST use the curly-brace form: "define structure NAME { ... }"
+  / "define table NAME { ... }" with a "}" close — NOT the older dot-terminated
+  "define structure NAME.\n...\nend structure." form, which this system rejects.
+- DDIC structures (define structure) need BOTH "@EndUserText.label : '...'" AND
+  "@AbapCatalog.enhancement.category" annotations or save fails with a generic
+  "errors in source; execute check for details" that the syntax-check tool does
+  NOT catch.
+- DDIC tables (define table) need "@AbapCatalog.tableCategory", "@AbapCatalog.deliveryClass",
+  "@AbapCatalog.dataMaintenance", and a "key client : abap.clnt not null;" first field.`
 
 var aiCodeCmd = &cobra.Command{
 	Use:   "code [prompt]",
