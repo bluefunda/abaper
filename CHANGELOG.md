@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.8](https://github.com/bluefunda/abaper/compare/v1.16.7...v1.16.8) (2026-07-10)
+
+
+### Bug Fixes
+
+* **ai:** default model to fast; collapse tool-call noise behind --verbose ([#130](https://github.com/bluefunda/abaper/issues/130)) ([8325fac](https://github.com/bluefunda/abaper/commit/8325fac38200eb06a25c904efbbf18f364cddf27))
+
 ## [1.16.7](https://github.com/bluefunda/abaper/compare/v1.16.6...v1.16.7) (2026-07-09)
 
 
