@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.9](https://github.com/bluefunda/abaper/compare/v1.16.8...v1.16.9) (2026-07-10)
+
+
+### Bug Fixes
+
+* **ai code:** encode live-verified ABAP/DDIC gotchas into the system prompt ([#132](https://github.com/bluefunda/abaper/issues/132)) ([e6319f8](https://github.com/bluefunda/abaper/commit/e6319f8992f0cc76e34bfc7144c94908b5482d7f))
+
 ## [1.16.8](https://github.com/bluefunda/abaper/compare/v1.16.7...v1.16.8) (2026-07-10)
 
 
