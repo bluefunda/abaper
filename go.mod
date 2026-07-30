@@ -1,10 +1,10 @@
 module github.com/bluefunda/abaper
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/bluefunda/banner v0.1.0
-	github.com/bluefunda/bluefunda-ai v1.35.3
+	github.com/bluefunda/bluefunda-ai v1.43.0
 	github.com/bluefunda/go-update v0.1.1
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -71,7 +71,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
