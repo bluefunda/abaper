@@ -39,9 +39,14 @@ func NewClient() (*Client, error) {
 		return nil, fmt.Errorf("not logged in — run 'abaper login' first")
 	}
 
+	realm := tokens.Realm
+	if realm == "" {
+		realm = cfg.Realm
+	}
+
 	// Refresh if expired
 	if time.Now().UnixMilli() >= tokens.ExpiresAt {
-		refreshed, err := RefreshAccessToken(cfg.Realm, tokens.RefreshToken)
+		refreshed, err := RefreshAccessToken(realm, tokens.RefreshToken)
 		if err != nil {
 			return nil, fmt.Errorf("session expired — run 'abaper login' again: %w", err)
 		}
@@ -49,6 +54,7 @@ func NewClient() (*Client, error) {
 			AccessToken:  refreshed.AccessToken,
 			RefreshToken: refreshed.RefreshToken,
 			ExpiresAt:    time.Now().Add(time.Duration(refreshed.ExpiresIn) * time.Second).UnixMilli(),
+			Realm:        realm,
 		}
 		if err := config.SaveTokens(tokens); err != nil {
 			return nil, fmt.Errorf("save refreshed tokens: %w", err)
@@ -58,7 +64,7 @@ func NewClient() (*Client, error) {
 	c := &Client{
 		BaseURL: cfg.BaseURL,
 		Token:   tokens.AccessToken,
-		Realm:   cfg.Realm,
+		Realm:   realm,
 		HTTPClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},

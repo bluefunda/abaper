@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -11,10 +10,11 @@ import (
 const (
 	DefaultBaseURL = "https://api.bluefunda.com"
 	DefaultRealm   = "individual"
-	ClientID       = "cai-cli"
-	ConfigDir      = ".abaper"
-	ConfigFile     = "config"
-	TokenFile      = "tokens.yaml"
+	// ClientID matches bai's own Keycloak client ID, so tokens issued by
+	// `bai login` are valid for the ABAPer gateway too — see LoadTokens.
+	ClientID   = "bai"
+	ConfigDir  = ".abaper"
+	ConfigFile = "config"
 )
 
 type Config struct {
@@ -23,10 +23,13 @@ type Config struct {
 	Realm   string `mapstructure:"realm"`
 }
 
+// Tokens is abaper's in-memory view of the credentials `bai login` stores.
+// abaper has no token store of its own — see LoadTokens/SaveTokens.
 type Tokens struct {
-	AccessToken  string `mapstructure:"access_token"`
-	RefreshToken string `mapstructure:"refresh_token"`
-	ExpiresAt    int64  `mapstructure:"expires_at"`
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    int64
+	Realm        string
 }
 
 func ConfigDirPath() string {
@@ -65,48 +68,4 @@ func Load() *Config {
 func EnsureConfigDir() error {
 	dir := ConfigDirPath()
 	return os.MkdirAll(dir, 0700)
-}
-
-func SaveTokens(tokens *Tokens) error {
-	if err := EnsureConfigDir(); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	v := viper.New()
-	v.SetConfigType("yaml")
-	v.Set("access_token", tokens.AccessToken)
-	v.Set("refresh_token", tokens.RefreshToken)
-	v.Set("expires_at", tokens.ExpiresAt)
-
-	path := filepath.Join(ConfigDirPath(), TokenFile)
-	if err := v.WriteConfigAs(path); err != nil {
-		return fmt.Errorf("write tokens: %w", err)
-	}
-
-	return os.Chmod(path, 0600)
-}
-
-func LoadTokens() (*Tokens, error) {
-	v := viper.New()
-	v.SetConfigName("tokens")
-	v.SetConfigType("yaml")
-	v.AddConfigPath(ConfigDirPath())
-
-	if err := v.ReadInConfig(); err != nil {
-		return nil, err
-	}
-
-	tokens := &Tokens{}
-	if err := v.Unmarshal(tokens); err != nil {
-		return nil, err
-	}
-	return tokens, nil
-}
-
-func ClearTokens() error {
-	path := filepath.Join(ConfigDirPath(), TokenFile)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }
