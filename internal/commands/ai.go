@@ -44,7 +44,12 @@ func runAIChat(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	systemPrompt := "You are an ABAP expert assistant."
+	systemPrompt := `You are an ABAP expert assistant.
+To look up something on the connected SAP system, use the abaper CLI via bash:
+  abaper get --name <NAME> --type <type>   # fetch an existing object's source
+  abaper search <PATTERN>                  # search objects by name pattern
+  abaper list objects --package <PACKAGE>  # list package contents
+Don't search the local filesystem — ABAP objects live on SAP, not on disk, unless a context file was given below.`
 	if contextFile != "" {
 		data, err := os.ReadFile(contextFile)
 		if err != nil {
@@ -62,7 +67,7 @@ func runAIChat(cmd *cobra.Command, args []string) error {
 func runAIChatText(ctx context.Context, model, systemPrompt, prompt string) error {
 	runner := agent.New(agent.Options{
 		Model:    model,
-		MaxTurns: 1,
+		MaxTurns: 5,
 		OnEvent: func(ev agent.Event) {
 			switch ev.Type {
 			case "text":
@@ -97,7 +102,7 @@ func runAIChatJSON(ctx context.Context, model, systemPrompt, prompt string) erro
 
 	runner := agent.New(agent.Options{
 		Model:    model,
-		MaxTurns: 1,
+		MaxTurns: 5,
 		OnEvent: func(ev agent.Event) {
 			switch ev.Type {
 			case "text":

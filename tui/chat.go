@@ -107,7 +107,7 @@ func newChatModel(version string) *chatModel {
 	// before the next message can be submitted.
 	m.runner = agent.New(agent.Options{
 		Model:    m.model,
-		MaxTurns: 1,
+		MaxTurns: 5,
 		OnEvent: func(ev agent.Event) {
 			if ch := m.currentCh; ch != nil {
 				select {
@@ -117,7 +117,12 @@ func newChatModel(version string) *chatModel {
 			}
 		},
 	})
-	m.runner.WithSystemPrompt("You are an ABAP expert assistant.")
+	m.runner.WithSystemPrompt(`You are an ABAP expert assistant.
+To look up something on the connected SAP system, use the abaper CLI via bash:
+  abaper get --name <NAME> --type <type>   # fetch an existing object's source
+  abaper search <PATTERN>                  # search objects by name pattern
+  abaper list objects --package <PACKAGE>  # list package contents
+Don't search the local filesystem — ABAP objects live on SAP, not on disk.`)
 
 	m.messages = []chatMessage{{kind: kindLogo}}
 	if _, err := config.LoadTokens(); err != nil {

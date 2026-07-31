@@ -15,6 +15,7 @@ import (
 const abapCodeSystemPrompt = `You are an ABAP expert developer. You write, review, and deploy SAP ABAP code.
 
 You can read and edit local ABAP source files. To interact with the SAP system use the abaper CLI via bash:
+  abaper get --name <NAME> --type <type>                           # fetch existing source for review before editing
   abaper deploy --name <NAME> --type <type> --source-file <path>   # upload + activate
   abaper test --name <NAME> --type <type>                          # syntax check
   abaper list objects --package <PACKAGE>                          # list package contents

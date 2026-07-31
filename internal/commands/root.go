@@ -39,13 +39,14 @@ func init() {
 	cobra.OnInitialize(config.Init)
 
 	rootCmd.PersistentFlags().String("base-url", "", "ABAPer API base URL (default: https://api.bluefunda.com)")
-	rootCmd.PersistentFlags().String("realm", "", "Keycloak realm (default: trm)")
+	rootCmd.PersistentFlags().String("realm", "", "Keycloak realm (default: individual)")
 	rootCmd.PersistentFlags().StringP("output", "o", "text", "Output format: text, json")
 
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(signupCmd)
 	rootCmd.AddCommand(generateCmd)
+	rootCmd.AddCommand(getCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(versionCmd)
