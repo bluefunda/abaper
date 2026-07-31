@@ -29,7 +29,9 @@ abaper                # opens the interactive AI chat
 ## Get going
 
 ```bash
-# 1. Authenticate with the ABAPer platform
+# 1. Authenticate with the ABAPer platform (delegates to `bai login` —
+#    one sign-in covers AI features and the gateway used by
+#    generate/deploy/test/search/list)
 abaper login
 
 # 2. Connect your SAP system (stored at ~/.abaper/systems.json, 0600)
@@ -54,19 +56,21 @@ abaper ai chat "Optimise this" --context-file program.abap
 abaper ai code "add an authorization check to ZCL_ORDER"   # agentic: reads, edits, deploys
 ```
 
-`ai code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them. It uses the embedded [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) SDK — sign in once with `bai login`.
+`ai code` requires a prompt argument and runs an agentic loop (default 20 turns, override with `--max-turns`) that can read and edit local ABAP files and deploy them. It uses the embedded [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) SDK — `abaper login` (which delegates to `bai login`) is all you need.
 
 ### Object operations
 
 ```bash
 abaper generate --type class --name ZCL_MY_CLASS --source-file my_class.abap   # create on SAP
 abaper deploy   --type program --name ZMY_REPORT --source-file report.abap     # upload + activate
+abaper get      --type class --name ZCL_MY_CLASS                               # fetch existing source
 abaper test     --type class --name ZCL_MY_CLASS                               # run unit tests
 abaper list objects  --package ZDEV
+abaper list packages --name ZDEV
 abaper search "ZMY_*"
 ```
 
-Object types: `program`, `class`, `interface`.
+Object types: `program`, `class`, `interface`. `--name` is required on `generate`/`deploy`/`test`/`list packages`; `deploy` additionally requires `--source-file`.
 
 ### SAP system management
 
@@ -184,14 +188,14 @@ Priority: CLI flags → environment variables → `~/.abaper/config.yaml`
 ```yaml
 # ~/.abaper/config.yaml
 base_url: https://api.bluefunda.com
-realm: trm
+realm: <your-keycloak-realm>   # optional — defaults to the same realm bai login uses
 org: default
 ```
 
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
 | `--base-url` | `ABAPER_BASE_URL` | `https://api.bluefunda.com` | API gateway URL |
-| `--realm` | `ABAPER_REALM` | `trm` | Keycloak realm |
+| `--realm` | `ABAPER_REALM` | same realm as `bai login` | Keycloak realm |
 | `--org` | `ABAPER_ORG` | `default` | Organisation |
 | `-o`, `--output` | — | `text` | Output format: `text`, `json` |
 

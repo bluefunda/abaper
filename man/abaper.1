@@ -65,8 +65,8 @@ ABAPer API base URL (default:
 .IR https://api.bluefunda.com ).
 .TP
 .BI \-\-realm " realm"
-Keycloak realm (default:
-.IR trm ).
+Keycloak realm (default: same realm as
+.B bai login ).
 .TP
 .BR \-o ", " \-\-output " " \fIformat\fR
 Output format:
@@ -163,7 +163,7 @@ Configuration is loaded in the following order of precedence:
 .RS 4
 .nf
 base_url: https://api.bluefunda.com
-realm: trm
+realm: <your-keycloak-realm>
 org: default
 .fi
 .RE
@@ -181,9 +181,10 @@ Override the organization.
 .TP
 .I ~/.abaper/config.yaml
 Configuration file.
-.TP
-.I ~/.abaper/tokens.yaml
-OAuth2 tokens. Created with permissions 0600.
+.PP
+abaper has no OAuth token store of its own \(em credentials come from
+.B bai login
+(\fI~/.bai/config.yaml\fR and the OS keychain).
 .SH EXAMPLES
 Authenticate and check connection:
 .PP
