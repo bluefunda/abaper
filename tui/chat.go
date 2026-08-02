@@ -749,52 +749,61 @@ func wrapPlain(s string, width int) string {
 }
 
 // renderStreamingContent renders an in-progress assistant message: markdown
-// is rendered live (headers, bold, lists, code) so formatting appears as it
-// streams, matching Claude Code's feel. The one carve-out is a markdown
-// table: glamour needs the complete row/separator syntax to parse one, and
-// verified separately, a *complete* table renders beautifully (proper
-// box-drawing, wrapped cells) — the garbling only happens on a partial one.
-// There's no reliable way to tell a partial table is "done" from streamed
-// text alone (models don't consistently emit a blank line after one), so
-// once a table starts, everything from that point on is shown as plain text
-// for the rest of the stream; the full markdown pass on turn completion
-// (see the non-streamingNow branch above) then renders it properly in one
-// shot. Text *before* the table always renders live regardless.
+// is rendered live (headers, bold, lists, code, tables) so formatting
+// appears as it streams, matching Claude Code's feel. Content is split into
+// blocks at blank-line boundaries — the same boundary markdown itself uses
+// to separate sections. Every block except the last has already been
+// terminated by a real blank line that has streamed in, so it's known
+// complete and renders live through glamour; a *complete* table renders
+// beautifully (proper box-drawing, wrapped cells) — verified separately,
+// the garbling only happens on a partial one. The last block is still being
+// written, so it only renders live if it doesn't look like an in-progress
+// table; a table needs its full row/separator syntax to parse, so it's
+// shown as plain wrapped text until the next block boundary confirms it's
+// done, at which point it "pops" into its properly-formatted form. Without
+// this per-block re-entry, a single early table would hold every later
+// paragraph and table in a long response in plain text for the rest of the
+// stream, which is far more noticeable than the moment any one table is
+// mid-write.
 func (m *chatModel) renderStreamingContent(content string) string {
 	if m.renderer == nil {
 		return wrapPlain(content, m.width-6)
 	}
 
-	idx := firstTableLineIndex(content)
-	if idx < 0 {
-		if r, err := m.renderer.Render(content); err == nil {
-			return strings.TrimRight(r, "\n")
-		}
-		return wrapPlain(content, m.width-6)
-	}
+	blocks := strings.Split(content, "\n\n")
+	current := blocks[len(blocks)-1]
 
-	before, tablePart := content[:idx], content[idx:]
 	var body string
-	if before != "" {
-		if r, err := m.renderer.Render(before); err == nil {
-			body = strings.TrimRight(r, "\n") + "\n"
+	if len(blocks) > 1 {
+		settled := strings.Join(blocks[:len(blocks)-1], "\n\n")
+		if r, err := m.renderer.Render(settled); err == nil {
+			body = strings.TrimRight(r, "\n") + "\n\n"
 		}
 	}
-	return body + wrapPlain(tablePart, m.width-6)
+	return body + m.renderStreamingBlock(current)
 }
 
-// firstTableLineIndex returns the byte offset of the first line in s whose
-// trimmed form starts with "|" (a markdown table row or separator), or -1
-// if s doesn't contain one yet.
-func firstTableLineIndex(s string) int {
-	offset := 0
-	for _, line := range strings.SplitAfter(s, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "|") {
-			return offset
-		}
-		offset += len(line)
+// renderStreamingBlock renders the still-open trailing block: live via
+// glamour unless it looks like an in-progress table.
+func (m *chatModel) renderStreamingBlock(block string) string {
+	if looksLikeTable(block) {
+		return wrapPlain(block, m.width-6)
 	}
-	return -1
+	if r, err := m.renderer.Render(block); err == nil {
+		return strings.TrimRight(r, "\n")
+	}
+	return wrapPlain(block, m.width-6)
+}
+
+// looksLikeTable reports whether s contains a line whose trimmed form
+// starts with "|" (a markdown table row or separator).
+func looksLikeTable(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "|") {
+			return true
+		}
+	}
+	return false
 }
 
 // formatTokenCount formats a token count as "512", "1.2k", "45k", etc.
