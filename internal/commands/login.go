@@ -7,13 +7,8 @@ import (
 
 	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
+	"github.com/bluefunda/abaper/pkg/output"
 	"github.com/spf13/cobra"
-)
-
-const (
-	ansiReset = "\033[0m"
-	ansiBold  = "\033[1m"
-	ansiGreen = "\033[32m"
 )
 
 var loginCmd = &cobra.Command{
@@ -51,5 +46,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 }
 
 func printLoginSuccess(msg string) {
-	fmt.Printf("\n%s✓%s %s%s%s\n", ansiGreen, ansiReset, ansiBold, msg, ansiReset)
+	fmt.Println()
+	output.OK(msg)
 }
