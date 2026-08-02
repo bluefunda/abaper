@@ -68,7 +68,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if outputFmt == "json" {
 		output.PrintJSON(result)
 	} else {
-		fmt.Printf("Successfully deployed and activated %s %s.\n", objectType, objectName)
+		output.OK("Successfully deployed and activated %s %s.", objectType, objectName)
 	}
 
 	return nil
