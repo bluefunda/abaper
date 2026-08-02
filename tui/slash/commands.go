@@ -32,6 +32,10 @@ type SourcePreviewMsg struct {
 // StatusMsg tells the app to show login/auth and SAP system connectivity status.
 type StatusMsg struct{}
 
+// ModelSwitchMsg tells the chat model to switch its LLM model. Args is empty
+// to cycle to the next known alias, or a single known alias to set directly.
+type ModelSwitchMsg struct{ Args []string }
+
 // UnknownCmdMsg is returned when a slash command is not found.
 type UnknownCmdMsg struct{ Name string }
 
@@ -147,8 +151,10 @@ var Registry = []Command{
 	},
 	{
 		Name:        "model",
-		Description: "Switch LLM model",
-		Handler:     func(_ []string) tea.Cmd { return nil },
+		Description: "Switch model: /model [auto|fast|think] — cycles when no arg given",
+		Handler: func(args []string) tea.Cmd {
+			return func() tea.Msg { return ModelSwitchMsg{Args: args} }
+		},
 	},
 	{
 		Name:        "cost",
