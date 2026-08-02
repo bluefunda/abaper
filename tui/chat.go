@@ -56,14 +56,20 @@ type streamToolMsg struct{ name string }
 type streamDoneMsg struct{ err error }
 type healthCheckedMsg struct{ report health.Report }
 type healthTickMsg struct{}
+type updateCheckedMsg struct{ latest string }
 
 // ── layout constants ───────────────────────────────────────────────────────
+//
+// Layout mirrors bai's: a top header (content + bottom border), the
+// conversation viewport, an optional slash menu, the input in a rounded
+// border box, and a bottom footer hint line.
 
 const (
-	statusBarHeight = 1
-	sepHeight       = 1
-	inputHeight     = 3
-	normalOverhead  = statusBarHeight + sepHeight + inputHeight
+	headerHeight   = 2 // content line + bottom border
+	footerHeight   = 1
+	inputBorderPad = 2 // rounded border top + bottom
+	inputHeight    = 3
+	normalOverhead = headerHeight + footerHeight + inputBorderPad + inputHeight
 )
 
 // ── chat model ─────────────────────────────────────────────────────────────
@@ -85,8 +91,9 @@ type chatModel struct {
 
 	model string
 
-	health        health.Report
-	healthChecked bool
+	health          health.Report
+	healthChecked   bool
+	updateAvailable string // latest version string, empty if up to date/unknown
 
 	slashOpen bool
 	slashMenu *slash.MenuModel
@@ -146,7 +153,7 @@ func newChatModel(version string) *chatModel {
 }
 
 func (m *chatModel) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, doHealthCheck(), healthTick())
+	return tea.Batch(textarea.Blink, doHealthCheck(), healthTick(), doUpdateCheck(m.version))
 }
 
 // doHealthCheck runs the fast (active-system-only) health check used by the
@@ -160,6 +167,22 @@ func doHealthCheck() tea.Cmd {
 
 func healthTick() tea.Cmd {
 	return tea.Tick(healthPollInterval, func(time.Time) tea.Msg { return healthTickMsg{} })
+}
+
+// doUpdateCheck runs once at startup (unlike the health check, it isn't
+// polled) and surfaces a footer badge when a newer abaper release exists.
+func doUpdateCheck(currentVersion string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		latest, err := health.LatestRelease(ctx)
+		current := strings.TrimPrefix(currentVersion, "v")
+		if err != nil || current == "dev" || latest == current {
+			return updateCheckedMsg{}
+		}
+		return updateCheckedMsg{latest: latest}
+	}
 }
 
 // SetSize recalculates component sizes when the terminal is resized.
@@ -318,6 +341,10 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 
 	case healthTickMsg:
 		return m, tea.Batch(doHealthCheck(), healthTick())
+
+	case updateCheckedMsg:
+		m.updateAvailable = ev.latest
+		return m, nil
 	}
 
 	// ── pass through to textarea and viewport ─────────────────────────────
@@ -454,11 +481,7 @@ func (m *chatModel) renderMessage(msg chatMessage) string {
 		return renderLogo(m.version, m.model)
 
 	case kindUser:
-		label := styles.StyleUserMsg.
-			Background(styles.ColorBorder).
-			Padding(0, 1).
-			Render("You")
-		return label + "  " + msg.content
+		return styles.StyleUserMsg.Render("You") + "  " + msg.content
 
 	case kindAssistant:
 		label := styles.StyleAssistantLabel.Render("◆ ABAPer")
@@ -474,7 +497,7 @@ func (m *chatModel) renderMessage(msg chatMessage) string {
 		return label + "\n" + rendered
 
 	case kindTool:
-		icon := lipgloss.NewStyle().Foreground(styles.ColorWarning).Render("⚙")
+		icon := styles.StyleTool.Render("●")
 		statusStr := lipgloss.NewStyle().Foreground(styles.ColorMuted).Render("● running")
 		switch msg.toolStatus {
 		case "completed":
@@ -497,24 +520,43 @@ func (m *chatModel) renderMessage(msg chatMessage) string {
 	return ""
 }
 
-func (m *chatModel) renderStatusBar() string {
-	left := m.renderAuthStatus()
-
-	if m.streaming {
-		right := styles.StyleWarning.Render("streaming  ·  Ctrl+C to cancel")
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return left + strings.Repeat(" ", gap) + right
+// renderHeader is the top bar: "◆ ABAPer  vX.Y.Z  ·  <model>" on the left,
+// live auth/system status (see renderAuthStatus) on the right — mirrors
+// bai's header layout and bottom-border-only style.
+func (m *chatModel) renderHeader() string {
+	left := styles.StyleAssistantLabel.Render("◆ ABAPer")
+	if m.version != "" {
+		left += styles.StyleMuted.Render("  " + m.version)
 	}
+	left += styles.StyleMuted.Render("  ·  " + m.model)
 
-	hint := styles.StyleMuted.Render("[↑] history  [/] commands  [?] help")
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(hint) - 2
+	right := m.renderAuthStatus()
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 1 {
 		gap = 1
 	}
-	return left + strings.Repeat(" ", gap) + hint
+	line := " " + left + strings.Repeat(" ", gap) + right
+	return styles.StyleHeader.Width(m.width).Render(line)
+}
+
+// renderFooter is the bottom hint line: key hints (swapped while streaming)
+// plus an update-available badge when a newer release exists.
+func (m *chatModel) renderFooter() string {
+	hint := "[↑] history  ·  /help commands  ·  ? help"
+	if m.streaming {
+		hint = "Ctrl+C / Esc cancel  ·  Ctrl+D quit"
+	}
+	left := "  " + styles.StyleMuted.Render(hint)
+	if m.updateAvailable == "" {
+		return left
+	}
+	badge := styles.StyleWarning.Render("↑ " + m.updateAvailable + " available  ·  run: abaper update")
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(badge) - 2
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + badge
 }
 
 // renderAuthStatus renders the auth dot plus the active SAP system's live
@@ -555,32 +597,34 @@ func (m *chatModel) renderAuthStatus() string {
 
 func (m *chatModel) renderInput() string {
 	if m.streaming {
-		return styles.StyleMuted.Render("  " + m.spinner.View() + " thinking...  (Ctrl+C to cancel)")
+		return styles.StyleMuted.Render(m.spinner.View() + " thinking...  (Ctrl+C to cancel)")
 	}
 	prompt := lipgloss.NewStyle().Foreground(styles.ColorAccent).Render("❯ ")
 	return prompt + m.textarea.View()
 }
 
+// renderInputBox wraps the input in a rounded border, like bai's input area.
+func (m *chatModel) renderInputBox() string {
+	return styles.StyleInputBorder.Width(m.width - 2).Render(m.renderInput())
+}
+
 // ── View ───────────────────────────────────────────────────────────────────
 
 func (m *chatModel) View() string {
-	sep := lipgloss.NewStyle().Foreground(styles.ColorBorder).
-		Render(strings.Repeat("─", m.width))
-
 	if m.slashOpen && m.slashMenu != nil {
 		return lipgloss.JoinVertical(lipgloss.Left,
+			m.renderHeader(),
 			m.viewport.View(),
-			m.renderStatusBar(),
 			m.slashMenu.View(),
-			sep,
-			m.renderInput(),
+			m.renderInputBox(),
+			m.renderFooter(),
 		)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
+		m.renderHeader(),
 		m.viewport.View(),
-		m.renderStatusBar(),
-		sep,
-		m.renderInput(),
+		m.renderInputBox(),
+		m.renderFooter(),
 	)
 }
