@@ -35,14 +35,16 @@ const abapSystemPrompt = "You are an ABAP expert assistant."
 // The SDK can deliver text chunks in fast bursts. Rather than dump each chunk
 // straight into the message, incoming text is buffered in pendingReveal and
 // drip-fed at a bounded rate, similar to Claude Code's typewriter-style
-// reveal. A large backlog (e.g. after a burst) reveals faster so long
-// responses don't trail far behind the model. See renderStreamingContent for
-// how the in-progress message is formatted while this is happening.
+// reveal. Ordinary chunks (up to a couple hundred characters — a sentence or
+// so) stay at the slow, readable base pace; only a genuinely large backlog
+// (a long response the reveal has fallen well behind) accelerates, so it
+// doesn't lag indefinitely. See renderStreamingContent for how the
+// in-progress message is formatted while this is happening.
 
 const (
-	revealInterval     = 30 * time.Millisecond
-	revealBaseRunes    = 1  // per tick at the normal, readable pace (~33 runes/sec)
-	revealCatchupDenom = 25 // backlogs drain over roughly this many ticks
+	revealInterval     = 45 * time.Millisecond
+	revealBaseRunes    = 1   // per tick at the normal, readable pace (~22 runes/sec)
+	revealCatchupDenom = 200 // backlog must exceed this many runes before speeding up
 )
 
 func revealChunkSize(pending int) int {
