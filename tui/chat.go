@@ -28,6 +28,8 @@ const healthPollInterval = 60 * time.Second
 // instead of red/green.
 const tokenExpiringSoon = 10 * time.Minute
 
+const abapSystemPrompt = "You are an ABAP expert assistant."
+
 // ── message types ──────────────────────────────────────────────────────────
 
 type msgKind int
@@ -53,7 +55,10 @@ type chatMessage struct {
 
 type streamChunkMsg struct{ content string }
 type streamToolMsg struct{ name string }
-type streamDoneMsg struct{ err error }
+type streamDoneMsg struct {
+	err    error
+	tokens int32 // input tokens for this turn, 0 if unknown/on error
+}
 type healthCheckedMsg struct{ report health.Report }
 type healthTickMsg struct{}
 type updateCheckedMsg struct{ latest string }
@@ -91,9 +96,10 @@ type chatModel struct {
 
 	model string
 
-	health          health.Report
-	healthChecked   bool
-	updateAvailable string // latest version string, empty if up to date/unknown
+	health            health.Report
+	healthChecked     bool
+	updateAvailable   string // latest version string, empty if up to date/unknown
+	totalPromptTokens int32
 
 	slashOpen bool
 	slashMenu *slash.MenuModel
@@ -139,7 +145,7 @@ func newChatModel(version string) *chatModel {
 			}
 		},
 	})
-	m.runner.WithSystemPrompt("You are an ABAP expert assistant.")
+	m.runner.WithSystemPrompt(abapSystemPrompt)
 
 	m.messages = []chatMessage{{kind: kindLogo}}
 	if _, err := config.LoadTokens(); err != nil {
@@ -322,6 +328,7 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 		if ev.err != nil && ev.err != context.Canceled {
 			m.messages = append(m.messages, chatMessage{kind: kindError, content: ev.err.Error()})
 		}
+		m.totalPromptTokens += ev.tokens
 		m.rebuildViewport()
 		return m, textarea.Blink
 
@@ -345,6 +352,10 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 	case updateCheckedMsg:
 		m.updateAvailable = ev.latest
 		return m, nil
+
+	case slash.ModelSwitchMsg:
+		m.switchModel(ev.Args)
+		return m, nil
 	}
 
 	// ── pass through to textarea and viewport ─────────────────────────────
@@ -354,6 +365,76 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 	cmds = append(cmds, taCmd, vpCmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+// ── model switching ────────────────────────────────────────────────────────
+
+// modelAliases are the abaper-known model aliases; the underlying SDK also
+// accepts a full model ID, but the /model slash command only cycles/sets
+// among these three.
+var modelAliases = []string{"auto", "fast", "think"}
+
+func isKnownModelAlias(s string) bool {
+	for _, a := range modelAliases {
+		if a == s {
+			return true
+		}
+	}
+	return false
+}
+
+func nextModelAlias(current string) string {
+	for i, a := range modelAliases {
+		if a == current {
+			return modelAliases[(i+1)%len(modelAliases)]
+		}
+	}
+	return modelAliases[0]
+}
+
+// switchModel replaces the runner with one using a new model alias, carrying
+// the existing conversation history forward (the SDK's Options.Model is only
+// read at Run time via an unexported field, so switching models means
+// constructing a new Runner rather than mutating the existing one).
+func (m *chatModel) switchModel(args []string) {
+	next := nextModelAlias(m.model)
+	if len(args) > 0 {
+		if !isKnownModelAlias(args[0]) {
+			m.messages = append(m.messages, chatMessage{
+				kind:    kindSystem,
+				content: fmt.Sprintf("Unknown model %q — known aliases: %s", args[0], strings.Join(modelAliases, ", ")),
+			})
+			m.rebuildViewport()
+			return
+		}
+		next = args[0]
+	}
+
+	history := m.runner.History()
+	m.model = next
+	m.runner = agent.New(agent.Options{
+		Model:    m.model,
+		MaxTurns: 1,
+		OnEvent: func(ev agent.Event) {
+			if ch := m.currentCh; ch != nil {
+				select {
+				case ch <- ev:
+				default:
+				}
+			}
+		},
+	})
+	if len(history) > 0 {
+		m.runner.WithHistory(history)
+	} else {
+		m.runner.WithSystemPrompt(abapSystemPrompt)
+	}
+
+	m.messages = append(m.messages, chatMessage{
+		kind:    kindSystem,
+		content: fmt.Sprintf("Switched to model **%s**.", m.model),
+	})
+	m.rebuildViewport()
 }
 
 // ── slash command execution ────────────────────────────────────────────────
@@ -421,7 +502,7 @@ func (m *chatModel) waitForStream() tea.Cmd {
 			case "tool_use":
 				return streamToolMsg{name: ev.ToolName}
 			case "result":
-				return streamDoneMsg{}
+				return streamDoneMsg{tokens: ev.InputToks}
 			case "error":
 				var msg string
 				if ev.Err != nil {
@@ -540,23 +621,41 @@ func (m *chatModel) renderHeader() string {
 	return styles.StyleHeader.Width(m.width).Render(line)
 }
 
-// renderFooter is the bottom hint line: key hints (swapped while streaming)
-// plus an update-available badge when a newer release exists.
+// renderFooter is the bottom hint line: key hints (swapped while streaming),
+// plus an update-available badge when a newer release exists, or otherwise
+// the cumulative input-token count once idle (whichever is more relevant is
+// shown — never both, to keep the line uncluttered).
 func (m *chatModel) renderFooter() string {
 	hint := "[↑] history  ·  /help commands  ·  ? help"
 	if m.streaming {
 		hint = "Ctrl+C / Esc cancel  ·  Ctrl+D quit"
 	}
 	left := "  " + styles.StyleMuted.Render(hint)
-	if m.updateAvailable == "" {
+
+	var right string
+	switch {
+	case m.updateAvailable != "":
+		right = styles.StyleWarning.Render("↑ " + m.updateAvailable + " available  ·  run: abaper update")
+	case !m.streaming && m.totalPromptTokens > 0:
+		right = styles.StyleMuted.Render(formatTokenCount(m.totalPromptTokens) + " tokens")
+	}
+	if right == "" {
 		return left
 	}
-	badge := styles.StyleWarning.Render("↑ " + m.updateAvailable + " available  ·  run: abaper update")
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(badge) - 2
+
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 1 {
 		gap = 1
 	}
-	return left + strings.Repeat(" ", gap) + badge
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// formatTokenCount formats a token count as "512", "1.2k", "45k", etc.
+func formatTokenCount(n int32) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 // renderAuthStatus renders the auth dot plus the active SAP system's live
