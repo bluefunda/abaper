@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -208,8 +209,8 @@ func (c *Client) HealthCheck() (map[string]string, error) {
 }
 
 // SystemConnect tests SAP system connectivity.
-func (c *Client) SystemConnect(sapHost, sapClient, sapUser, sapPassword string) error {
-	req, err := http.NewRequest(http.MethodPost, c.BaseURL+"/abaper/api/v1/system/connect", nil)
+func (c *Client) SystemConnect(ctx context.Context, sapHost, sapClient, sapUser, sapPassword string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/abaper/api/v1/system/connect", nil)
 	if err != nil {
 		return err
 	}

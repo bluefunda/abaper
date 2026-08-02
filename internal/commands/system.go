@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -179,7 +180,7 @@ func runSystemTest(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := c.SystemConnect(sys.Host, sys.Client, sys.Username, sys.Password); err != nil {
+	if err := c.SystemConnect(context.Background(), sys.Host, sys.Client, sys.Username, sys.Password); err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	fmt.Println("✓ Connection successful!")

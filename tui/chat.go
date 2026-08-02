@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -13,10 +14,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/bluefunda/abaper/internal/config"
+	"github.com/bluefunda/abaper/internal/health"
 	"github.com/bluefunda/abaper/styles"
 	"github.com/bluefunda/abaper/tui/slash"
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
 )
+
+// healthPollInterval controls how often the TUI re-checks login/system
+// status in the background so the header self-heals without user action.
+const healthPollInterval = 60 * time.Second
+
+// tokenExpiringSoon is the threshold below which the auth dot turns amber
+// instead of red/green.
+const tokenExpiringSoon = 10 * time.Minute
 
 // ── message types ──────────────────────────────────────────────────────────
 
@@ -42,8 +52,10 @@ type chatMessage struct {
 // ── tea messages ───────────────────────────────────────────────────────────
 
 type streamChunkMsg struct{ content string }
-type streamToolMsg  struct{ name string }
-type streamDoneMsg  struct{ err error }
+type streamToolMsg struct{ name string }
+type streamDoneMsg struct{ err error }
+type healthCheckedMsg struct{ report health.Report }
+type healthTickMsg struct{}
 
 // ── layout constants ───────────────────────────────────────────────────────
 
@@ -72,6 +84,9 @@ type chatModel struct {
 	runner       *agent.Runner
 
 	model string
+
+	health        health.Report
+	healthChecked bool
 
 	slashOpen bool
 	slashMenu *slash.MenuModel
@@ -131,7 +146,20 @@ func newChatModel(version string) *chatModel {
 }
 
 func (m *chatModel) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, doHealthCheck(), healthTick())
+}
+
+// doHealthCheck runs the fast (active-system-only) health check used by the
+// status bar; the full multi-system breakdown is only computed on demand via
+// the /status slash command.
+func doHealthCheck() tea.Cmd {
+	return func() tea.Msg {
+		return healthCheckedMsg{report: health.Check(context.Background(), false)}
+	}
+}
+
+func healthTick() tea.Cmd {
+	return tea.Tick(healthPollInterval, func(time.Time) tea.Msg { return healthTickMsg{} })
 }
 
 // SetSize recalculates component sizes when the terminal is resized.
@@ -282,6 +310,14 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 			// Re-render viewport so spinner frame updates in place
 			m.viewport.SetContent(m.renderMessages())
 		}
+
+	case healthCheckedMsg:
+		m.health = ev.report
+		m.healthChecked = true
+		return m, nil
+
+	case healthTickMsg:
+		return m, tea.Batch(doHealthCheck(), healthTick())
 	}
 
 	// ── pass through to textarea and viewport ─────────────────────────────
@@ -461,10 +497,8 @@ func (m *chatModel) renderMessage(msg chatMessage) string {
 	return ""
 }
 
-
 func (m *chatModel) renderStatusBar() string {
-	left := lipgloss.NewStyle().Foreground(styles.ColorAccent).Render("◉")
-	left += styles.StyleMuted.Render(" connected")
+	left := m.renderAuthStatus()
 
 	if m.streaming {
 		right := styles.StyleWarning.Render("streaming  ·  Ctrl+C to cancel")
@@ -481,6 +515,42 @@ func (m *chatModel) renderStatusBar() string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + hint
+}
+
+// renderAuthStatus renders the auth dot plus the active SAP system's live
+// reachability, e.g. "● authenticated  ● A4H". Real state comes from the
+// background health check (see doHealthCheck/healthTick); before the first
+// check completes it shows a neutral "checking..." placeholder.
+func (m *chatModel) renderAuthStatus() string {
+	if !m.healthChecked {
+		return styles.StyleMuted.Render("◌ checking...")
+	}
+
+	var dotColor lipgloss.TerminalColor
+	var label string
+	switch {
+	case !m.health.TokenPresent:
+		dotColor, label = styles.ColorError, "not logged in"
+	case !m.health.TokenValid:
+		dotColor, label = styles.ColorError, "session expired"
+	case m.health.TokenExpiresIn < tokenExpiringSoon:
+		dotColor, label = styles.ColorWarning, "session expiring"
+	default:
+		dotColor, label = styles.ColorSuccess, "authenticated"
+	}
+	auth := lipgloss.NewStyle().Foreground(dotColor).Render("●") + styles.StyleMuted.Render(" "+label)
+
+	if len(m.health.Systems) == 0 {
+		return auth + styles.StyleMuted.Render("  no SAP system")
+	}
+	sys := m.health.Systems[0] // fast check only queries the active system
+	sysColor := styles.ColorError
+	if sys.Reachable {
+		sysColor = styles.ColorSuccess
+	}
+	sysPart := lipgloss.NewStyle().Foreground(sysColor).Render("●") + styles.StyleMuted.Render(" "+sys.Name)
+
+	return auth + "  " + sysPart
 }
 
 func (m *chatModel) renderInput() string {
