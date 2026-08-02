@@ -751,54 +751,50 @@ func wrapPlain(s string, width int) string {
 // renderStreamingContent renders an in-progress assistant message: markdown
 // is rendered live (headers, bold, lists, code) so formatting appears as it
 // streams, matching Claude Code's feel. The one carve-out is a markdown
-// table still being written — glamour needs the full separator-row syntax to
-// parse a table, so rendering one mid-write produces garbled output (see
-// #145). The still-open trailing paragraph is held back as plain text only
-// when it looks like an in-progress table; everything settled before it
-// (and anything else in the trailing paragraph) renders normally.
+// table: glamour needs the complete row/separator syntax to parse one, and
+// verified separately, a *complete* table renders beautifully (proper
+// box-drawing, wrapped cells) — the garbling only happens on a partial one.
+// There's no reliable way to tell a partial table is "done" from streamed
+// text alone (models don't consistently emit a blank line after one), so
+// once a table starts, everything from that point on is shown as plain text
+// for the rest of the stream; the full markdown pass on turn completion
+// (see the non-streamingNow branch above) then renders it properly in one
+// shot. Text *before* the table always renders live regardless.
 func (m *chatModel) renderStreamingContent(content string) string {
 	if m.renderer == nil {
 		return wrapPlain(content, m.width-6)
 	}
 
-	settled, trailing := splitTrailingParagraph(content)
-	if !looksLikeInProgressTable(trailing) {
+	idx := firstTableLineIndex(content)
+	if idx < 0 {
 		if r, err := m.renderer.Render(content); err == nil {
 			return strings.TrimRight(r, "\n")
 		}
 		return wrapPlain(content, m.width-6)
 	}
 
+	before, tablePart := content[:idx], content[idx:]
 	var body string
-	if settled != "" {
-		if r, err := m.renderer.Render(settled); err == nil {
+	if before != "" {
+		if r, err := m.renderer.Render(before); err == nil {
 			body = strings.TrimRight(r, "\n") + "\n"
 		}
 	}
-	return body + wrapPlain(trailing, m.width-6)
+	return body + wrapPlain(tablePart, m.width-6)
 }
 
-// splitTrailingParagraph splits s at its last blank-line boundary, returning
-// the settled (paragraph-complete) prefix and the still-open trailing
-// paragraph. If there's no blank line yet, the whole string is trailing.
-func splitTrailingParagraph(s string) (settled, trailing string) {
-	if idx := strings.LastIndex(s, "\n\n"); idx != -1 {
-		return s[:idx+2], s[idx+2:]
-	}
-	return "", s
-}
-
-// looksLikeInProgressTable reports whether s contains a markdown table row —
-// a heuristic, not a full parser, deliberately biased toward over-detecting
-// (holding back formatting a beat longer) rather than under-detecting and
-// letting a half-formed table through to glamour.
-func looksLikeInProgressTable(s string) bool {
-	for _, line := range strings.Split(s, "\n") {
+// firstTableLineIndex returns the byte offset of the first line in s whose
+// trimmed form starts with "|" (a markdown table row or separator), or -1
+// if s doesn't contain one yet.
+func firstTableLineIndex(s string) int {
+	offset := 0
+	for _, line := range strings.SplitAfter(s, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "|") {
-			return true
+			return offset
 		}
+		offset += len(line)
 	}
-	return false
+	return -1
 }
 
 // formatTokenCount formats a token count as "512", "1.2k", "45k", etc.

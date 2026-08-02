@@ -30,27 +30,20 @@ func TestWrapPlain(t *testing.T) {
 	}
 }
 
-func TestSplitTrailingParagraph(t *testing.T) {
-	settled, trailing := splitTrailingParagraph("para one.\n\npara two still writing")
-	if settled != "para one.\n\n" || trailing != "para two still writing" {
-		t.Errorf("got settled=%q trailing=%q", settled, trailing)
+func TestFirstTableLineIndex(t *testing.T) {
+	if idx := firstTableLineIndex("just a sentence, no pipes here"); idx != -1 {
+		t.Errorf("plain prose should not be detected as a table, got idx=%d", idx)
 	}
 
-	settled, trailing = splitTrailingParagraph("no blank line yet")
-	if settled != "" || trailing != "no blank line yet" {
-		t.Errorf("with no blank line, everything should be trailing; got settled=%q trailing=%q", settled, trailing)
+	s := "intro text\n| Type | Description |\n| --- | --- |"
+	idx := firstTableLineIndex(s)
+	if idx < 0 || s[idx:idx+1] != "|" {
+		t.Errorf("expected idx to point at the table row start, got idx=%d in %q", idx, s)
 	}
-}
 
-func TestLooksLikeInProgressTable(t *testing.T) {
-	if !looksLikeInProgressTable("| Type | Description |") {
-		t.Errorf("expected a line starting with | to be detected as a table")
-	}
-	if !looksLikeInProgressTable("intro text\n| Type | Description |\n| --- | --- |") {
-		t.Errorf("expected a multi-line block containing a table row to be detected")
-	}
-	if looksLikeInProgressTable("just a sentence, no pipes here") {
-		t.Errorf("plain prose should not be detected as a table")
+	// A single line consisting only of a table row: idx should be 0.
+	if idx := firstTableLineIndex("| Type | Description |"); idx != 0 {
+		t.Errorf("expected idx=0 for a string that starts with a table row, got %d", idx)
 	}
 }
 
