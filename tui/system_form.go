@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -53,14 +54,14 @@ var sfPlaceholders = [sfCount]string{
 // ── styles ────────────────────────────────────────────────────────────────────
 
 var (
-	sfFormBox   = styles.StyleAccentBorder.Padding(1, 3)
-	sfTitle     = lipgloss.NewStyle().Bold(true).Foreground(styles.ColorAccent)
-	sfLabel     = lipgloss.NewStyle().Foreground(styles.ColorMuted).Width(16)
-	sfInputOn   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.ColorAccent).Padding(0, 1)
-	sfInputOff  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.ColorBorder).Padding(0, 1)
-	sfHint      = lipgloss.NewStyle().Foreground(styles.ColorMuted).Italic(true)
-	sfSuccess   = styles.StyleSuccess
-	sfErr       = styles.StyleError
+	sfFormBox  = styles.StyleAccentBorder.Padding(1, 3)
+	sfTitle    = lipgloss.NewStyle().Bold(true).Foreground(styles.ColorAccent)
+	sfLabel    = lipgloss.NewStyle().Foreground(styles.ColorMuted).Width(16)
+	sfInputOn  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.ColorAccent).Padding(0, 1)
+	sfInputOff = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(styles.ColorBorder).Padding(0, 1)
+	sfHint     = lipgloss.NewStyle().Foreground(styles.ColorMuted).Italic(true)
+	sfSuccess  = styles.StyleSuccess
+	sfErr      = styles.StyleError
 )
 
 // ── model ─────────────────────────────────────────────────────────────────────
@@ -206,7 +207,7 @@ func (m *systemFormModel) runTest() tea.Cmd {
 			if err != nil {
 				return systemTestResultMsg{err: err}
 			}
-			return systemTestResultMsg{err: c.SystemConnect(host, sapClient, username, password)}
+			return systemTestResultMsg{err: c.SystemConnect(context.Background(), host, sapClient, username, password)}
 		},
 	)
 }
