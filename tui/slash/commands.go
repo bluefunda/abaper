@@ -29,6 +29,9 @@ type SourcePreviewMsg struct {
 	ObjectType string
 }
 
+// StatusMsg tells the app to show login/auth and SAP system connectivity status.
+type StatusMsg struct{}
+
 // UnknownCmdMsg is returned when a slash command is not found.
 type UnknownCmdMsg struct{ Name string }
 
@@ -76,6 +79,11 @@ var Registry = []Command{
 				return func() tea.Msg { return SystemOpenMsg{EditID: ""} }
 			}
 		},
+	},
+	{
+		Name:        "status",
+		Description: "Show login and SAP system connection status",
+		Handler:     func(_ []string) tea.Cmd { return func() tea.Msg { return StatusMsg{} } },
 	},
 	{
 		Name:        "compact",
