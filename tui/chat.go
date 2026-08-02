@@ -33,16 +33,16 @@ const abapSystemPrompt = "You are an ABAP expert assistant."
 // ── streamed-reveal pacing ──────────────────────────────────────────────────
 //
 // The SDK can deliver text chunks in fast bursts. Rather than dump each chunk
-// straight into the message (and re-render markdown on the still-incomplete
-// result — see renderMessage's streamingNow branch), incoming text is buffered
-// in pendingReveal and drip-fed at a bounded rate, similar to Claude Code's
-// typewriter-style reveal. A large backlog (e.g. after a burst) reveals faster
-// so long responses don't trail far behind the model.
+// straight into the message, incoming text is buffered in pendingReveal and
+// drip-fed at a bounded rate, similar to Claude Code's typewriter-style
+// reveal. A large backlog (e.g. after a burst) reveals faster so long
+// responses don't trail far behind the model. See renderStreamingContent for
+// how the in-progress message is formatted while this is happening.
 
 const (
-	revealInterval     = 16 * time.Millisecond
-	revealBaseRunes    = 3  // per tick at the normal, readable pace
-	revealCatchupDenom = 30 // backlogs drain over roughly this many ticks
+	revealInterval     = 30 * time.Millisecond
+	revealBaseRunes    = 1  // per tick at the normal, readable pace (~33 runes/sec)
+	revealCatchupDenom = 25 // backlogs drain over roughly this many ticks
 )
 
 func revealChunkSize(pending int) int {
@@ -654,13 +654,8 @@ func (m *chatModel) renderMessage(msg chatMessage, streamingNow bool) string {
 		if msg.content == "" {
 			return label
 		}
-		// While still streaming, multi-line markdown constructs (tables in
-		// particular) are syntactically incomplete — glamour needs the full
-		// text to parse them, so rendering the partial content through it
-		// produces garbled output. Show plain, width-wrapped text until the
-		// turn completes, then do a single full markdown pass.
 		if streamingNow {
-			return label + "\n" + wrapPlain(msg.content, m.width-6)
+			return label + "\n" + m.renderStreamingContent(msg.content)
 		}
 		rendered := msg.content
 		if m.renderer != nil {
@@ -745,12 +740,65 @@ func (m *chatModel) renderFooter() string {
 
 // wrapPlain soft-wraps plain text to width, preserving explicit newlines.
 // Used for the in-progress assistant message during streaming (see
-// renderMessage's streamingNow branch) before the full markdown pass runs.
+// renderStreamingContent) before the full markdown pass runs.
 func wrapPlain(s string, width int) string {
 	if width < 10 {
 		return s
 	}
 	return lipgloss.NewStyle().Width(width).Render(s)
+}
+
+// renderStreamingContent renders an in-progress assistant message: markdown
+// is rendered live (headers, bold, lists, code) so formatting appears as it
+// streams, matching Claude Code's feel. The one carve-out is a markdown
+// table still being written — glamour needs the full separator-row syntax to
+// parse a table, so rendering one mid-write produces garbled output (see
+// #145). The still-open trailing paragraph is held back as plain text only
+// when it looks like an in-progress table; everything settled before it
+// (and anything else in the trailing paragraph) renders normally.
+func (m *chatModel) renderStreamingContent(content string) string {
+	if m.renderer == nil {
+		return wrapPlain(content, m.width-6)
+	}
+
+	settled, trailing := splitTrailingParagraph(content)
+	if !looksLikeInProgressTable(trailing) {
+		if r, err := m.renderer.Render(content); err == nil {
+			return strings.TrimRight(r, "\n")
+		}
+		return wrapPlain(content, m.width-6)
+	}
+
+	var body string
+	if settled != "" {
+		if r, err := m.renderer.Render(settled); err == nil {
+			body = strings.TrimRight(r, "\n") + "\n"
+		}
+	}
+	return body + wrapPlain(trailing, m.width-6)
+}
+
+// splitTrailingParagraph splits s at its last blank-line boundary, returning
+// the settled (paragraph-complete) prefix and the still-open trailing
+// paragraph. If there's no blank line yet, the whole string is trailing.
+func splitTrailingParagraph(s string) (settled, trailing string) {
+	if idx := strings.LastIndex(s, "\n\n"); idx != -1 {
+		return s[:idx+2], s[idx+2:]
+	}
+	return "", s
+}
+
+// looksLikeInProgressTable reports whether s contains a markdown table row —
+// a heuristic, not a full parser, deliberately biased toward over-detecting
+// (holding back formatting a beat longer) rather than under-detecting and
+// letting a half-formed table through to glamour.
+func looksLikeInProgressTable(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "|") {
+			return true
+		}
+	}
+	return false
 }
 
 // formatTokenCount formats a token count as "512", "1.2k", "45k", etc.

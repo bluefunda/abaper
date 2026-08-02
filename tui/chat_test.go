@@ -30,6 +30,30 @@ func TestWrapPlain(t *testing.T) {
 	}
 }
 
+func TestSplitTrailingParagraph(t *testing.T) {
+	settled, trailing := splitTrailingParagraph("para one.\n\npara two still writing")
+	if settled != "para one.\n\n" || trailing != "para two still writing" {
+		t.Errorf("got settled=%q trailing=%q", settled, trailing)
+	}
+
+	settled, trailing = splitTrailingParagraph("no blank line yet")
+	if settled != "" || trailing != "no blank line yet" {
+		t.Errorf("with no blank line, everything should be trailing; got settled=%q trailing=%q", settled, trailing)
+	}
+}
+
+func TestLooksLikeInProgressTable(t *testing.T) {
+	if !looksLikeInProgressTable("| Type | Description |") {
+		t.Errorf("expected a line starting with | to be detected as a table")
+	}
+	if !looksLikeInProgressTable("intro text\n| Type | Description |\n| --- | --- |") {
+		t.Errorf("expected a multi-line block containing a table row to be detected")
+	}
+	if looksLikeInProgressTable("just a sentence, no pipes here") {
+		t.Errorf("plain prose should not be detected as a table")
+	}
+}
+
 func TestModelAliasCycling(t *testing.T) {
 	if !isKnownModelAlias("fast") || isKnownModelAlias("bogus") {
 		t.Errorf("isKnownModelAlias gave wrong result for known/unknown aliases")
