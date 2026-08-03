@@ -28,7 +28,36 @@ const healthPollInterval = 60 * time.Second
 // instead of red/green.
 const tokenExpiringSoon = 10 * time.Minute
 
-const abapSystemPrompt = "You are an ABAP expert assistant."
+const abapSystemPrompt = `You are an ABAP expert assistant.
+
+Avoid markdown tables — they render poorly in narrow terminals and on mobile
+screens. Prefer prose paragraphs or bullet/numbered lists, even when
+comparing multiple things. Only use a table if the user explicitly asks for
+one.`
+
+// ── streamed-reveal pacing ──────────────────────────────────────────────────
+//
+// The SDK can deliver text chunks in fast bursts. Rather than dump each chunk
+// straight into the message, incoming text is buffered in pendingReveal and
+// drip-fed at a bounded rate, similar to Claude Code's typewriter-style
+// reveal. Ordinary chunks (up to a couple hundred characters — a sentence or
+// so) stay at the slow, readable base pace; only a genuinely large backlog
+// (a long response the reveal has fallen well behind) accelerates, so it
+// doesn't lag indefinitely. See renderStreamingContent for how the
+// in-progress message is formatted while this is happening.
+
+const (
+	revealInterval     = 45 * time.Millisecond
+	revealBaseRunes    = 1   // per tick at the normal, readable pace (~22 runes/sec)
+	revealCatchupDenom = 200 // backlog must exceed this many runes before speeding up
+)
+
+func revealChunkSize(pending int) int {
+	if catchup := pending / revealCatchupDenom; catchup > revealBaseRunes {
+		return catchup
+	}
+	return revealBaseRunes
+}
 
 // ── message types ──────────────────────────────────────────────────────────
 
@@ -62,6 +91,7 @@ type streamDoneMsg struct {
 type healthCheckedMsg struct{ report health.Report }
 type healthTickMsg struct{}
 type updateCheckedMsg struct{ latest string }
+type revealTickMsg struct{}
 
 // ── layout constants ───────────────────────────────────────────────────────
 //
@@ -100,6 +130,15 @@ type chatModel struct {
 	healthChecked     bool
 	updateAvailable   string // latest version string, empty if up to date/unknown
 	totalPromptTokens int32
+
+	// pendingReveal holds text received from the stream but not yet shown —
+	// see the "streamed-reveal pacing" section above. networkDone/doneErr/
+	// doneTokens capture the streamDoneMsg outcome so it can be applied once
+	// pendingReveal fully drains, rather than the instant it arrives.
+	pendingReveal string
+	networkDone   bool
+	doneErr       error
+	doneTokens    int32
 
 	slashOpen bool
 	slashMenu *slash.MenuModel
@@ -263,11 +302,13 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 	// ── key events ────────────────────────────────────────────────────────
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch {
-		// Cancel active stream
+		// Cancel active stream — drop any not-yet-revealed text so the turn
+		// stops immediately rather than finishing its typewriter reveal.
 		case (keyMsg.Type == tea.KeyCtrlC || keyMsg.Type == tea.KeyEsc) && m.streaming:
 			if m.cancelStream != nil {
 				m.cancelStream()
 			}
+			m.pendingReveal = ""
 			return m, nil
 
 		// Show help on `?`
@@ -313,8 +354,9 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 	// ── streaming events ──────────────────────────────────────────────────
 	switch ev := msg.(type) {
 	case streamChunkMsg:
-		m.appendToLastAssistant(ev.content)
-		m.rebuildViewport()
+		// Buffer for the typewriter reveal instead of showing immediately —
+		// keep draining the channel so the SDK never blocks on a full buffer.
+		m.pendingReveal += ev.content
 		return m, m.waitForStream()
 
 	case streamToolMsg:
@@ -323,14 +365,41 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 		return m, m.waitForStream()
 
 	case streamDoneMsg:
-		m.streaming = false
-		m.cancelStream = nil
-		if ev.err != nil && ev.err != context.Canceled {
-			m.messages = append(m.messages, chatMessage{kind: kindError, content: ev.err.Error()})
+		m.networkDone = true
+		m.doneErr = ev.err
+		m.doneTokens = ev.tokens
+		if m.pendingReveal == "" {
+			m.finishStreaming()
+			return m, textarea.Blink
 		}
-		m.totalPromptTokens += ev.tokens
-		m.rebuildViewport()
-		return m, textarea.Blink
+		return m, nil // revealTick (already running) drains the rest
+
+	case revealTickMsg:
+		if !m.streaming {
+			// Turn already finished (streamDoneMsg arrived with nothing left
+			// to reveal) — let this stray, already-scheduled tick die quietly
+			// instead of re-running finishStreaming.
+			return m, nil
+		}
+		if m.pendingReveal != "" {
+			runes := []rune(m.pendingReveal)
+			n := revealChunkSize(len(runes))
+			if n > len(runes) {
+				n = len(runes)
+			}
+			m.appendToLastAssistant(string(runes[:n]))
+			m.pendingReveal = string(runes[n:])
+			m.rebuildViewport()
+		}
+		// Keep ticking (even with nothing to reveal yet) until the network
+		// side has signaled done and the backlog is fully drained — a single
+		// revealTick chain must stay alive to pick up chunks that arrive in
+		// the gap between ticks.
+		if m.pendingReveal == "" && m.networkDone {
+			m.finishStreaming()
+			return m, textarea.Blink
+		}
+		return m, revealTick()
 
 	case spinner.TickMsg:
 		if m.streaming {
@@ -463,6 +532,10 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 	m.messages = append(m.messages, chatMessage{kind: kindUser, content: input})
 	m.messages = append(m.messages, chatMessage{kind: kindAssistant, content: ""})
 	m.streaming = true
+	m.pendingReveal = ""
+	m.networkDone = false
+	m.doneErr = nil
+	m.doneTokens = 0
 	m.rebuildViewport()
 
 	ch := make(chan agent.Event, 64)
@@ -483,7 +556,24 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 		}
 	}()
 
-	return tea.Batch(m.spinner.Tick, m.waitForStream())
+	return tea.Batch(m.spinner.Tick, m.waitForStream(), revealTick())
+}
+
+// revealTick drives the typewriter-style reveal of pendingReveal.
+func revealTick() tea.Cmd {
+	return tea.Tick(revealInterval, func(time.Time) tea.Msg { return revealTickMsg{} })
+}
+
+// finishStreaming applies the outcome captured from streamDoneMsg once
+// pendingReveal has fully drained.
+func (m *chatModel) finishStreaming() {
+	m.streaming = false
+	m.cancelStream = nil
+	if m.doneErr != nil && m.doneErr != context.Canceled {
+		m.messages = append(m.messages, chatMessage{kind: kindError, content: m.doneErr.Error()})
+	}
+	m.totalPromptTokens += m.doneTokens
+	m.rebuildViewport()
 }
 
 // waitForStream is a recursive Cmd that drains one meaningful event from streamCh.
@@ -546,8 +636,10 @@ func (m *chatModel) upsertTool(name, status string, durationMs int) {
 
 func (m *chatModel) renderMessages() string {
 	var parts []string
-	for _, msg := range m.messages {
-		parts = append(parts, m.renderMessage(msg))
+	lastIdx := len(m.messages) - 1
+	for i, msg := range m.messages {
+		streamingNow := m.streaming && i == lastIdx && msg.kind == kindAssistant
+		parts = append(parts, m.renderMessage(msg, streamingNow))
 	}
 	if m.streaming {
 		parts = append(parts, m.spinner.View()+" "+
@@ -556,7 +648,7 @@ func (m *chatModel) renderMessages() string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (m *chatModel) renderMessage(msg chatMessage) string {
+func (m *chatModel) renderMessage(msg chatMessage, streamingNow bool) string {
 	switch msg.kind {
 	case kindLogo:
 		return renderLogo(m.version, m.model)
@@ -568,6 +660,9 @@ func (m *chatModel) renderMessage(msg chatMessage) string {
 		label := styles.StyleAssistantLabel.Render("◆ ABAPer")
 		if msg.content == "" {
 			return label
+		}
+		if streamingNow {
+			return label + "\n" + m.renderStreamingContent(msg.content)
 		}
 		rendered := msg.content
 		if m.renderer != nil {
@@ -648,6 +743,74 @@ func (m *chatModel) renderFooter() string {
 		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// wrapPlain soft-wraps plain text to width, preserving explicit newlines.
+// Used for the in-progress assistant message during streaming (see
+// renderStreamingContent) before the full markdown pass runs.
+func wrapPlain(s string, width int) string {
+	if width < 10 {
+		return s
+	}
+	return lipgloss.NewStyle().Width(width).Render(s)
+}
+
+// renderStreamingContent renders an in-progress assistant message: markdown
+// is rendered live (headers, bold, lists, code, tables) so formatting
+// appears as it streams, matching Claude Code's feel. Content is split into
+// blocks at blank-line boundaries — the same boundary markdown itself uses
+// to separate sections. Every block except the last has already been
+// terminated by a real blank line that has streamed in, so it's known
+// complete and renders live through glamour; a *complete* table renders
+// beautifully (proper box-drawing, wrapped cells) — verified separately,
+// the garbling only happens on a partial one. The last block is still being
+// written, so it only renders live if it doesn't look like an in-progress
+// table; a table needs its full row/separator syntax to parse, so it's
+// shown as plain wrapped text until the next block boundary confirms it's
+// done, at which point it "pops" into its properly-formatted form. Without
+// this per-block re-entry, a single early table would hold every later
+// paragraph and table in a long response in plain text for the rest of the
+// stream, which is far more noticeable than the moment any one table is
+// mid-write.
+func (m *chatModel) renderStreamingContent(content string) string {
+	if m.renderer == nil {
+		return wrapPlain(content, m.width-6)
+	}
+
+	blocks := strings.Split(content, "\n\n")
+	current := blocks[len(blocks)-1]
+
+	var body string
+	if len(blocks) > 1 {
+		settled := strings.Join(blocks[:len(blocks)-1], "\n\n")
+		if r, err := m.renderer.Render(settled); err == nil {
+			body = strings.TrimRight(r, "\n") + "\n\n"
+		}
+	}
+	return body + m.renderStreamingBlock(current)
+}
+
+// renderStreamingBlock renders the still-open trailing block: live via
+// glamour unless it looks like an in-progress table.
+func (m *chatModel) renderStreamingBlock(block string) string {
+	if looksLikeTable(block) {
+		return wrapPlain(block, m.width-6)
+	}
+	if r, err := m.renderer.Render(block); err == nil {
+		return strings.TrimRight(r, "\n")
+	}
+	return wrapPlain(block, m.width-6)
+}
+
+// looksLikeTable reports whether s contains a line whose trimmed form
+// starts with "|" (a markdown table row or separator).
+func looksLikeTable(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "|") {
+			return true
+		}
+	}
+	return false
 }
 
 // formatTokenCount formats a token count as "512", "1.2k", "45k", etc.
