@@ -28,7 +28,12 @@ const healthPollInterval = 60 * time.Second
 // instead of red/green.
 const tokenExpiringSoon = 10 * time.Minute
 
-const abapSystemPrompt = "You are an ABAP expert assistant."
+const abapSystemPrompt = `You are an ABAP expert assistant.
+
+Avoid markdown tables — they render poorly in narrow terminals and on mobile
+screens. Prefer prose paragraphs or bullet/numbered lists, even when
+comparing multiple things. Only use a table if the user explicitly asks for
+one.`
 
 // ── streamed-reveal pacing ──────────────────────────────────────────────────
 //
