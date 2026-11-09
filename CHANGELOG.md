@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.16.10](https://github.com/bluefunda/abaper/compare/v1.16.9...v1.16.10) (2026-11-09)
+
+
+### Bug Fixes
+
+* **ai:** safe, self-verifying agent loop — no silent renames, abaper check, verification gate, TUI agent ([#160](https://github.com/bluefunda/abaper/issues/160)) ([b032ad1](https://github.com/bluefunda/abaper/commit/b032ad1d6f045cc4a7fdcfef77d476e527daf078))
+
 ## [1.16.9](https://github.com/bluefunda/abaper/compare/v1.16.8...v1.16.9) (2026-07-10)
 
 
