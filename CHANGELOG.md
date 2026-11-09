@@ -2,6 +2,13 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.17.0](https://github.com/bluefunda/abaper/compare/v1.16.10...v1.17.0) (2026-11-09)
+
+
+### Features
+
+* **status:** real health reporting — token validity, gateway, per-system SAP connectivity ([#142](https://github.com/bluefunda/abaper/issues/142)) ([859c0d6](https://github.com/bluefunda/abaper/commit/859c0d6f9ebce765dcafd3a44c8a7f8f343cb688))
+
 ## [1.16.10](https://github.com/bluefunda/abaper/compare/v1.16.9...v1.16.10) (2026-11-09)
 
 
