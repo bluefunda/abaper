@@ -2,6 +2,18 @@
 
 > **Note:** Prior to v2.0.0 this project was published as `github.com/bluefunda/abaper-cli`. Historical links in this changelog point to the old repository for reference.
 
+## [1.18.0](https://github.com/bluefunda/abaper/compare/v1.17.0...v1.18.0) (2026-11-09)
+
+
+### Features
+
+* **tui:** model-alias picker, idle token footer, slash-menu audit ([#144](https://github.com/bluefunda/abaper/issues/144)) ([1474f81](https://github.com/bluefunda/abaper/commit/1474f812ad17672f4f1ad9d42d39576f6c8b0375))
+
+
+### Bug Fixes
+
+* **deps:** bump bluefunda-ai to v1.62.0 to restore Windows builds ([#163](https://github.com/bluefunda/abaper/issues/163)) ([2da61d6](https://github.com/bluefunda/abaper/commit/2da61d650955a98367c5ff159a7c4363e6439ce9))
+
 ## [1.17.0](https://github.com/bluefunda/abaper/compare/v1.16.10...v1.17.0) (2026-11-09)
 
 
