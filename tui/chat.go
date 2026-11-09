@@ -17,6 +17,7 @@ import (
 	"github.com/bluefunda/abaper/internal/health"
 	"github.com/bluefunda/abaper/styles"
 	"github.com/bluefunda/abaper/tui/slash"
+	"github.com/bluefunda/abaper/internal/agentrun"
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
 )
 
@@ -82,6 +83,7 @@ type chatModel struct {
 	streamCh     chan agent.Event
 	currentCh    chan agent.Event // written by runner's OnEvent; swapped per message
 	runner       *agent.Runner
+	tracker      *agentrun.Tracker // SAP objects touched by the current message; swapped per message
 
 	model string
 
@@ -122,8 +124,11 @@ func newChatModel(version string) *chatModel {
 	// before the next message can be submitted.
 	m.runner = agent.New(agent.Options{
 		Model:    m.model,
-		MaxTurns: 1,
+		MaxTurns: 20,
 		OnEvent: func(ev agent.Event) {
+			if tr := m.tracker; tr != nil {
+				tr.Observe(ev)
+			}
 			if ch := m.currentCh; ch != nil {
 				select {
 				case ch <- ev:
@@ -132,7 +137,7 @@ func newChatModel(version string) *chatModel {
 			}
 		},
 	})
-	m.runner.WithSystemPrompt("You are an ABAP expert assistant.")
+	m.runner.WithSystemPrompt(agentrun.SystemPrompt)
 
 	m.messages = []chatMessage{{kind: kindLogo}}
 	if _, err := config.LoadTokens(); err != nil {
@@ -299,6 +304,11 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 		if ev.err != nil && ev.err != context.Canceled {
 			m.messages = append(m.messages, chatMessage{kind: kindError, content: ev.err.Error()})
 		}
+		if m.tracker != nil {
+			if objs := m.tracker.Objects(); len(objs) > 0 {
+				m.messages = append(m.messages, chatMessage{kind: kindSystem, content: agentrun.Summary(objs)})
+			}
+		}
 		m.rebuildViewport()
 		return m, textarea.Blink
 
@@ -358,6 +368,7 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 	m.rebuildViewport()
 
 	ch := make(chan agent.Event, 64)
+	m.tracker = agentrun.NewTracker()
 	m.currentCh = ch // runner's OnEvent closure writes here
 	m.streamCh = ch
 
