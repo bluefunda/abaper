@@ -44,7 +44,12 @@ func runAIChat(cmd *cobra.Command, args []string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	systemPrompt := "You are an ABAP expert assistant."
+	systemPrompt := `You are an ABAP expert assistant.
+
+Avoid markdown tables — they render poorly in narrow terminals and on mobile
+screens. Prefer prose paragraphs or bullet/numbered lists, even when
+comparing multiple things. Only use a table if the user explicitly asks for
+one.`
 	if contextFile != "" {
 		data, err := os.ReadFile(contextFile)
 		if err != nil {
