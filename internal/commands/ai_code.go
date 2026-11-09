@@ -7,49 +7,23 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/bluefunda/abaper/internal/agentrun"
+	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
-
-const abapCodeSystemPrompt = `You are an ABAP expert developer. You write, review, and deploy SAP ABAP code.
-
-You can read and edit local ABAP source files. To interact with the SAP system use the abaper CLI via bash:
-  abaper deploy --name <NAME> --type <type> --source-file <path>   # upload + activate
-  abaper test --name <NAME> --type <type>                          # syntax check
-  abaper list objects --package <PACKAGE>                          # list package contents
-  abaper search <PATTERN>                                          # search objects
-
-Rules:
-- Always uppercase ABAP object names (ZCL_MY_CLASS, ZFM_VALIDATE, etc.)
-- Valid types: program, class, interface, function, include, structure, table
-- Prefer reading existing source before writing new files
-- After writing source, always deploy and check for syntax errors
-- DO NOT explain or describe what you are about to do — act immediately with tool calls
-- DO NOT show code in prose — write it directly to a file with write_file
-- Keep all text responses to one line maximum
-- If deploy returns "already exists", append _V2 (then _V3, etc.) to the name and retry
-- Interfaces MUST declare "INTERFACE <name> PUBLIC." — omitting PUBLIC deploys and
-  activates the object shell fine, then fails with a misleading, unrelated-looking
-  "A class already exists with the name X" error. If you see that exact error on an
-  interface, the real cause is almost always the missing PUBLIC keyword, not a
-  naming conflict — fix the source, do not rename and retry.
-- DDIC structures and tables MUST use the curly-brace form: "define structure NAME { ... }"
-  / "define table NAME { ... }" with a "}" close — NOT the older dot-terminated
-  "define structure NAME.\n...\nend structure." form, which this system rejects.
-- DDIC structures (define structure) need BOTH "@EndUserText.label : '...'" AND
-  "@AbapCatalog.enhancement.category" annotations or save fails with a generic
-  "errors in source; execute check for details" that the syntax-check tool does
-  NOT catch.
-- DDIC tables (define table) need "@AbapCatalog.tableCategory", "@AbapCatalog.deliveryClass",
-  "@AbapCatalog.dataMaintenance", and a "key client : abap.clnt not null;" first field.`
 
 var aiCodeCmd = &cobra.Command{
 	Use:   "code [prompt]",
 	Short: "Agentic ABAP coding assistant — reads, writes, deploys",
 	Long: `Run an agentic loop that can read and edit local ABAP source files
 and deploy them to SAP via the abaper CLI. The agent iterates until the
-task is complete or the turn limit is reached.`,
+task is complete or the turn limit is reached.
+
+When the loop ends, abaper itself syntax-checks, activates and unit-tests
+every object the agent deployed. Failures are fed back to the agent for up
+to --repair-turns rounds; the command exits non-zero if any remain.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runAICode,
 }
@@ -59,6 +33,8 @@ func init() {
 	aiCodeCmd.Flags().Int("max-turns", 20, "Maximum agentic loop iterations")
 	aiCodeCmd.Flags().String("context-file", "", "Seed the session with an ABAP source file")
 	aiCodeCmd.Flags().Bool("verbose", false, "Show every tool call and its output instead of a collapsed progress line")
+	aiCodeCmd.Flags().Bool("no-verify", false, "Skip the post-run syntax check / activation / unit test gate")
+	aiCodeCmd.Flags().Int("repair-turns", 2, "Rounds the agent gets to fix objects that fail verification")
 
 	aiCmd.AddCommand(aiCodeCmd)
 }
@@ -68,6 +44,8 @@ func runAICode(cmd *cobra.Command, args []string) error {
 	maxTurns, _ := cmd.Flags().GetInt("max-turns")
 	contextFile, _ := cmd.Flags().GetString("context-file")
 	verbose, _ := cmd.Flags().GetBool("verbose")
+	noVerify, _ := cmd.Flags().GetBool("no-verify")
+	repairTurns, _ := cmd.Flags().GetInt("repair-turns")
 
 	prompt := strings.Join(args, " ")
 
@@ -96,10 +74,13 @@ func runAICode(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	tracker := agentrun.NewTracker()
+
 	runner := agent.New(agent.Options{
 		Model:    model,
 		MaxTurns: maxTurns,
 		OnEvent: func(ev agent.Event) {
+			tracker.Observe(ev)
 			switch ev.Type {
 			case "text":
 				clearProgressLine()
@@ -130,19 +111,66 @@ func runAICode(cmd *cobra.Command, args []string) error {
 	})
 	defer func() { _ = runner.Close() }()
 
-	runner.WithSystemPrompt(abapCodeSystemPrompt)
+	runner.WithSystemPrompt(agentrun.SystemPrompt)
 
-	if err := runner.Run(ctx, prompt); err != nil {
+	run := func(p string) error {
+		err := runner.Run(ctx, p)
 		clearProgressLine()
-		if ctx.Err() != nil {
-			return nil // user cancelled
-		}
-		if strings.Contains(err.Error(), "not signed in") {
+		if err != nil && strings.Contains(err.Error(), "not signed in") {
 			return fmt.Errorf("%w\n\nRun: bai login", err)
 		}
 		return err
 	}
+
+	if err := run(prompt); err != nil {
+		if ctx.Err() != nil {
+			return nil // user cancelled
+		}
+		fmt.Fprintln(os.Stderr, "\n"+agentrun.Summary(tracker.Objects()))
+		return err
+	}
+
+	if !noVerify && len(tracker.Objects()) > 0 {
+		if err := verifyAndRepair(ctx, run, tracker, repairTurns); err != nil {
+			fmt.Fprintln(os.Stderr, "\n"+agentrun.Summary(tracker.Objects()))
+			return err
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, "\n"+agentrun.Summary(tracker.Objects()))
+	for _, o := range tracker.Objects() {
+		if !o.OK {
+			return fmt.Errorf("%s %s was not deployed: %s", o.Type, o.Name, o.Detail)
+		}
+	}
 	return nil
+}
+
+// verifyAndRepair runs the post-loop gate and hands failures back to the
+// agent for up to repairTurns rounds.
+func verifyAndRepair(ctx context.Context, run func(string) error, tracker *agentrun.Tracker, repairTurns int) error {
+	c, err := client.NewClient()
+	if err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
+	for round := 0; ; round++ {
+		fmt.Fprintln(os.Stderr, "\nVerifying SAP objects…")
+		results := agentrun.Verify(c, tracker.Objects())
+		fmt.Fprintln(os.Stderr, agentrun.Report(results))
+		if agentrun.AllPassed(results) {
+			return nil
+		}
+		if round >= repairTurns {
+			return fmt.Errorf("verification failed after %d repair round(s)", repairTurns)
+		}
+		fmt.Fprintf(os.Stderr, "\nRepair round %d of %d…\n", round+1, repairTurns)
+		if err := run(agentrun.RepairPrompt(results)); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+	}
 }
 
 func plural(n int) string {
