@@ -21,7 +21,7 @@ make vet          # Run go vet
 
 ## CLI Commands
 
-`login`, `logout`, `status`, `generate`, `deploy`, `test`, `list objects`, `list packages`, `ai chat`, `version`
+`login`, `logout`, `status`, `generate`, `deploy`, `check`, `test`, `list objects`, `list packages`, `ai chat`, `version`
 
 ## Key Patterns
 
