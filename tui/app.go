@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
+	"github.com/bluefunda/abaper/internal/health"
 	"github.com/bluefunda/abaper/tui/slash"
 )
 
@@ -159,6 +162,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.rebuildViewport()
 		return m, nil
 
+	case slash.StatusMsg:
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: "Checking status…",
+		})
+		m.chat.rebuildViewport()
+		return m, doStatusCheck()
+
+	case statusResultMsg:
+		m.chat.messages = append(m.chat.messages, chatMessage{
+			kind:    kindSystem,
+			content: msg.content,
+		})
+		m.chat.rebuildViewport()
+		return m, nil
+
 	case slash.UnknownCmdMsg:
 		return m, nil
 	}
@@ -237,11 +256,59 @@ func (m *Model) View() string {
 	return m.chat.View()
 }
 
-const helpText = `Commands: /help /clear /source /object /system /system add /system list /quit
+const helpText = `Commands: /help /clear /status /source /object /system /system add /system list /quit
 Keys: Enter submit · Shift+Enter newline · Ctrl+C/Esc cancel stream · Tab navigate form · Ctrl+T test connection · Ctrl+S save`
 
 type searchResultMsg struct{ content string }
 type sourceResultMsg struct{ content string }
+type statusResultMsg struct{ content string }
+
+// doStatusCheck runs the full (every configured system) health check for the
+// /status slash command — this is deliberately more thorough than the fast
+// active-system-only check that drives the status bar.
+func doStatusCheck() tea.Cmd {
+	return func() tea.Msg {
+		return statusResultMsg{content: formatStatusReport(health.Check(context.Background(), true))}
+	}
+}
+
+func formatStatusReport(r health.Report) string {
+	var sb strings.Builder
+	sb.WriteString("**Status**\n\n")
+
+	switch {
+	case !r.TokenPresent:
+		sb.WriteString("Auth: not logged in — run `abaper login`\n")
+	case !r.TokenValid:
+		sb.WriteString("Auth: session expired — run `abaper login`\n")
+	default:
+		fmt.Fprintf(&sb, "Auth: authenticated (expires in %s)\n", r.TokenExpiresIn.Round(time.Minute))
+	}
+
+	if r.GatewayReachable {
+		fmt.Fprintf(&sb, "Gateway: reachable (%s)\n", r.GatewayLatency.Round(time.Millisecond))
+	} else {
+		sb.WriteString("Gateway: unreachable\n")
+	}
+
+	sb.WriteString("\n**SAP Systems**\n\n")
+	if len(r.Systems) == 0 {
+		sb.WriteString("No SAP systems configured. Use `/system add`.\n")
+		return sb.String()
+	}
+	for _, s := range r.Systems {
+		marker := "  "
+		if s.Active {
+			marker = "● "
+		}
+		state := "✗ unreachable"
+		if s.Reachable {
+			state = fmt.Sprintf("✓ reachable (%s)", s.Latency.Round(time.Millisecond))
+		}
+		fmt.Fprintf(&sb, "%s**%s** — %s — %s\n", marker, s.Name, s.Host, state)
+	}
+	return sb.String()
+}
 
 func doGetSource(name, objectType string) tea.Cmd {
 	return func() tea.Msg {

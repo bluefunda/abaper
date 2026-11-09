@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -371,7 +372,7 @@ func TestSystemConnect(t *testing.T) {
 		gotUser = r.Header.Get("X-SAP-User")
 		w.WriteHeader(http.StatusOK)
 	})
-	err := c.SystemConnect("https://a4h.example.com", "001", "developer", "secret")
+	err := c.SystemConnect(context.Background(), "https://a4h.example.com", "001", "developer", "secret")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestSystemConnect_PropagatesFailure(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"success":false,"error":"invalid credentials"}`))
 	})
-	err := c.SystemConnect("https://a4h.example.com", "001", "developer", "wrong")
+	err := c.SystemConnect(context.Background(), "https://a4h.example.com", "001", "developer", "wrong")
 	if err == nil {
 		t.Fatal("expected error for failed connection, got nil")
 	}
