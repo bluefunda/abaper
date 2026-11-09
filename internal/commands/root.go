@@ -51,6 +51,7 @@ func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(aiCmd)
 	rootCmd.AddCommand(testCmd)
+	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(systemCmd)

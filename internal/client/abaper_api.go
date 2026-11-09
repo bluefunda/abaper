@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bluefunda/abaper/internal/config"
+	"github.com/bluefunda/abaper/types"
 )
 
 // APIResponse is the standard response envelope from ABAPer APIs.
@@ -306,13 +307,13 @@ func (c *Client) Activate(objectName, objectType string) (*ActivateResult, error
 }
 
 // SyntaxCheck runs syntax validation on source code.
-func (c *Client) SyntaxCheck(objectName, objectType, source string) (*map[string]any, error) {
+func (c *Client) SyntaxCheck(objectName, objectType, source string) (*types.SyntaxCheckResult, error) {
 	body := map[string]string{
 		"object_name": objectName,
 		"object_type": objectType,
 		"source":      source,
 	}
-	return Post[map[string]any](c, "/api/v1/syntax-check", body)
+	return Post[types.SyntaxCheckResult](c, "/api/v1/syntax-check", body)
 }
 
 // FormatCode formats ABAP source code.
@@ -382,12 +383,12 @@ func (c *Client) ListObjects(packageName, objectType string) ([]map[string]any, 
 }
 
 // RunUnitTests executes ABAP unit tests for an object.
-func (c *Client) RunUnitTests(objectName, objectType string) (*map[string]any, error) {
+func (c *Client) RunUnitTests(objectName, objectType string) (*types.UnitTestResult, error) {
 	body := map[string]string{
 		"object_name": objectName,
 		"object_type": objectType,
 	}
-	return Post[map[string]any](c, "/api/v1/unit-tests", body)
+	return Post[types.UnitTestResult](c, "/api/v1/unit-tests", body)
 }
 
 // Completion retrieves code completion suggestions.
