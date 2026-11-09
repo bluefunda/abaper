@@ -54,13 +54,14 @@ abaper ai chat "Optimise this" --context-file program.abap
 abaper ai code "add an authorization check to ZCL_ORDER"   # agentic: reads, edits, deploys
 ```
 
-`ai code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them. It uses the embedded [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) SDK — sign in once with `bai login`.
+`ai code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them. When it finishes, abaper syntax-checks, activates and unit-tests every object the agent deployed, gives the agent up to two rounds to fix failures, and prints the list of SAP objects it touched (`--no-verify` skips the gate). The agent never renames an object to work around a conflict; it stops and reports it. It uses the embedded [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) SDK — sign in once with `bai login`.
 
 ### Object operations
 
 ```bash
 abaper generate --type class --name ZCL_MY_CLASS --source-file my_class.abap   # create on SAP
 abaper deploy   --type program --name ZMY_REPORT --source-file report.abap     # upload + activate
+abaper check    --type class --name ZCL_MY_CLASS --source-file my_class.abap   # syntax check, no save
 abaper test     --type class --name ZCL_MY_CLASS                               # run unit tests
 abaper list objects  --package ZDEV
 abaper search "ZMY_*"

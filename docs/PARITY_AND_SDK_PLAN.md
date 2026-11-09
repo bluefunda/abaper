@@ -1,13 +1,21 @@
 # abaper — Parity & SDK Work Plan (Handoff)
 
+> **Status update (2026-11-09): historical — do not resume from the steps below.**
+> Parity items A, B and C are implemented in `rest/server/server.go`
+> (`/api/v1/activate` alias, save-mode branch in `createObjectHandler`,
+> `/api/v1/packages/contents`), and a top-level `sdk/` package exists.
+> Remaining SDK work (tests, packaging, choosing `lib` vs `sdk` as the public
+> entry point) is tracked in #157. Still open from this doc and not tracked
+> elsewhere: the abaper-ts decommission checks in "Parity acceptance".
+
 Status snapshot as of 2026-07-02. Captures pending work toward three objectives.
 Written mid-task because usage limits were approaching — this is the resume point.
 
 ## Objectives
 
-1. **abaper has parity with abaper-ts** — 🔴 NOT met (scope now narrowed, see below)
+1. **abaper has parity with abaper-ts** — ✅ A/B/C built (decommission checks still pending)
 2. **abaper calls the bai SDK** — ✅ MET
-3. **abaper exposes its own SDK (like bai)** — 🟡 ~80% (works via `lib/`, needs packaging)
+3. **abaper exposes its own SDK (like bai)** — 🟡 `sdk/` exists; finish in #157
 
 ---
 
