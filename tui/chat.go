@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/bluefunda/abaper/internal/agentrun"
 	"github.com/bluefunda/abaper/internal/config"
 	"github.com/bluefunda/abaper/internal/health"
 	"github.com/bluefunda/abaper/styles"
@@ -28,7 +29,8 @@ const healthPollInterval = 60 * time.Second
 // instead of red/green.
 const tokenExpiringSoon = 10 * time.Minute
 
-const abapSystemPrompt = "You are an ABAP expert assistant."
+// abapSystemPrompt is the deploy-capable agent prompt shared with `ai code`.
+const abapSystemPrompt = agentrun.SystemPrompt
 
 // ── message types ──────────────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ type chatModel struct {
 	streamCh     chan agent.Event
 	currentCh    chan agent.Event // written by runner's OnEvent; swapped per message
 	runner       *agent.Runner
+	tracker      *agentrun.Tracker // SAP objects touched by the current message; swapped per message
 
 	model string
 
@@ -133,18 +136,7 @@ func newChatModel(version string) *chatModel {
 	// which sendMessage replaces before each Run() call — no race because
 	// BubbleTea's update loop is single-threaded and streaming must finish
 	// before the next message can be submitted.
-	m.runner = agent.New(agent.Options{
-		Model:    m.model,
-		MaxTurns: 1,
-		OnEvent: func(ev agent.Event) {
-			if ch := m.currentCh; ch != nil {
-				select {
-				case ch <- ev:
-				default:
-				}
-			}
-		},
-	})
+	m.runner = m.newRunner()
 	m.runner.WithSystemPrompt(abapSystemPrompt)
 
 	m.messages = []chatMessage{{kind: kindLogo}}
@@ -328,6 +320,11 @@ func (m *chatModel) Update(msg tea.Msg) (*chatModel, tea.Cmd) {
 		if ev.err != nil && ev.err != context.Canceled {
 			m.messages = append(m.messages, chatMessage{kind: kindError, content: ev.err.Error()})
 		}
+		if m.tracker != nil {
+			if objs := m.tracker.Objects(); len(objs) > 0 {
+				m.messages = append(m.messages, chatMessage{kind: kindSystem, content: agentrun.Summary(objs)})
+			}
+		}
 		m.totalPromptTokens += ev.tokens
 		m.rebuildViewport()
 		return m, textarea.Blink
@@ -392,6 +389,27 @@ func nextModelAlias(current string) string {
 	return modelAliases[0]
 }
 
+// newRunner builds the deploy-capable agent runner for the current model.
+// OnEvent feeds the per-message tracker and writes to m.currentCh, which
+// sendMessage replaces before each Run() call.
+func (m *chatModel) newRunner() *agent.Runner {
+	return agent.New(agent.Options{
+		Model:    m.model,
+		MaxTurns: 20,
+		OnEvent: func(ev agent.Event) {
+			if tr := m.tracker; tr != nil {
+				tr.Observe(ev)
+			}
+			if ch := m.currentCh; ch != nil {
+				select {
+				case ch <- ev:
+				default:
+				}
+			}
+		},
+	})
+}
+
 // switchModel replaces the runner with one using a new model alias, carrying
 // the existing conversation history forward (the SDK's Options.Model is only
 // read at Run time via an unexported field, so switching models means
@@ -412,18 +430,7 @@ func (m *chatModel) switchModel(args []string) {
 
 	history := m.runner.History()
 	m.model = next
-	m.runner = agent.New(agent.Options{
-		Model:    m.model,
-		MaxTurns: 1,
-		OnEvent: func(ev agent.Event) {
-			if ch := m.currentCh; ch != nil {
-				select {
-				case ch <- ev:
-				default:
-				}
-			}
-		},
-	})
+	m.runner = m.newRunner()
 	if len(history) > 0 {
 		m.runner.WithHistory(history)
 	} else {
@@ -466,6 +473,7 @@ func (m *chatModel) sendMessage(input string) tea.Cmd {
 	m.rebuildViewport()
 
 	ch := make(chan agent.Event, 64)
+	m.tracker = agentrun.NewTracker()
 	m.currentCh = ch // runner's OnEvent closure writes here
 	m.streamCh = ch
 

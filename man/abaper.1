@@ -43,8 +43,13 @@ See
 .BR abaper\-deploy (1)
 for details.
 .TP
+.B check
+Syntax-check local ABAP source against the target system without saving or
+activating it. Exits non-zero when the check reports errors.
+.TP
 .B test
 Run ABAP unit tests for an object on the target system.
+Exits non-zero when any test fails.
 .TP
 .B list objects
 List ABAP objects, optionally filtered by package or type.
@@ -87,6 +92,19 @@ Object type:
 .BI \-\-source\-file " path"
 Path to ABAP source file. If omitted, a default template is generated.
 .SH DEPLOY FLAGS
+.TP
+.BI \-\-name " name"
+Object name (required).
+.TP
+.BI \-\-type " type"
+Object type:
+.BR program ", " class ", or " interface
+(default:
+.IR program ).
+.TP
+.BI \-\-source\-file " path"
+Path to ABAP source file (required).
+.SH CHECK FLAGS
 .TP
 .BI \-\-name " name"
 Object name (required).
