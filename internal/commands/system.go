@@ -10,6 +10,7 @@ import (
 
 	"github.com/bluefunda/abaper/internal/client"
 	"github.com/bluefunda/abaper/internal/config"
+	"github.com/bluefunda/abaper/pkg/output"
 )
 
 var systemCmd = &cobra.Command{
@@ -92,7 +93,7 @@ func runSystemAdd(cmd *cobra.Command, _ []string) error {
 	}
 
 	added := cfg.FindByNameOrID(id)
-	fmt.Printf("✓ Added SAP system %q (%s)\n", added.Name, added.Host)
+	output.OK("Added SAP system %q (%s)", added.Name, added.Host)
 	if cfg.Active == id {
 		fmt.Println("  Set as active system.")
 	}
@@ -134,7 +135,7 @@ func runSystemUse(_ *cobra.Command, args []string) error {
 	if err := config.SaveSystems(cfg); err != nil {
 		return err
 	}
-	fmt.Printf("✓ Active system set to %q (%s)\n", s.Name, s.Host)
+	output.OK("Active system set to %q (%s)", s.Name, s.Host)
 	return nil
 }
 
@@ -152,7 +153,7 @@ func runSystemRemove(_ *cobra.Command, args []string) error {
 	if err := config.SaveSystems(cfg); err != nil {
 		return err
 	}
-	fmt.Printf("✓ Removed %q\n", name)
+	output.OK("Removed %q", name)
 	return nil
 }
 
@@ -183,6 +184,6 @@ func runSystemTest(_ *cobra.Command, args []string) error {
 	if err := c.SystemConnect(context.Background(), sys.Host, sys.Client, sys.Username, sys.Password); err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
-	fmt.Println("✓ Connection successful!")
+	output.OK("Connection successful!")
 	return nil
 }

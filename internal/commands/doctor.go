@@ -2,9 +2,7 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -90,25 +88,14 @@ func tokenCheck(r health.Report) checkResult {
 // release. Any failure to reach the GitHub API is a warning, not an error —
 // update checks are best-effort.
 func versionCheck() checkResult {
-	httpClient := &http.Client{Timeout: 3 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/bluefunda/abaper/releases/latest", nil)
-	if err != nil {
-		return checkResult{label: "Version", warn: true, info: version}
-	}
-	resp, err := httpClient.Do(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	latest, err := health.LatestRelease(ctx)
 	if err != nil {
 		return checkResult{label: "Version", warn: true, info: version + " (couldn't check for updates)"}
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil || release.TagName == "" {
-		return checkResult{label: "Version", warn: true, info: version + " (couldn't check for updates)"}
-	}
-
-	latest := strings.TrimPrefix(release.TagName, "v")
 	current := strings.TrimPrefix(version, "v")
 	if current != "dev" && latest != current {
 		return checkResult{label: "Version", warn: true, info: fmt.Sprintf("%s (%s available — run: abaper update)", current, latest)}

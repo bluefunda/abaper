@@ -61,7 +61,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			"name":   objectName,
 		})
 	} else {
-		fmt.Printf("Successfully created %s %s.\n", objectType, objectName)
+		output.OK("Successfully created %s %s.", objectType, objectName)
 	}
 
 	return nil
