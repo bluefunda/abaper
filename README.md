@@ -1,5 +1,32 @@
 # ABAPer
 
+> [!IMPORTANT]
+> **ABAPer has moved to [bluefunda/bluefunda-ai](https://github.com/bluefunda/bluefunda-ai/tree/main/abaper).**
+> This repository is archived and no longer receives updates; v1.18.0 is its last release.
+> New releases, issues and pull requests live in bluefunda-ai, starting with [v1.62.1](https://github.com/bluefunda/bluefunda-ai/releases/tag/v1.62.1).
+>
+> **CLI users:** nothing to change. `brew upgrade --cask abaper` and the
+> [install script](https://bluefunda.com/abaper/install.sh) pick up the new releases, and the
+> `abaper` binary keeps its name and commands. To install from source:
+> `go install github.com/bluefunda/bluefunda-ai/abaper/cmd/abaper@latest`.
+>
+> **Go SDK users:** update your import paths. The packages ship in the
+> `github.com/bluefunda/bluefunda-ai` module, starting at v1.62.1:
+>
+> ```bash
+> go get github.com/bluefunda/bluefunda-ai@latest
+> ```
+>
+> | Old import | New import |
+> |---|---|
+> | `github.com/bluefunda/abaper/sdk` | `github.com/bluefunda/bluefunda-ai/abaper/sdk` |
+> | `github.com/bluefunda/abaper/types` | `github.com/bluefunda/bluefunda-ai/abaper/types` |
+> | `github.com/bluefunda/abaper/lsp` | `github.com/bluefunda/bluefunda-ai/abaper/lsp` |
+> | `github.com/bluefunda/abaper/lib` | `github.com/bluefunda/bluefunda-ai/abaper/lib` |
+> | `github.com/bluefunda/abaper/rest/...` | `github.com/bluefunda/bluefunda-ai/abaper/rest/...` |
+>
+> The documentation below is kept for reference and describes v1.18.0.
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/abaper)
 [![CI](https://github.com/bluefunda/abaper/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/abaper/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
